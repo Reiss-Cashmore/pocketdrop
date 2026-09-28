@@ -76,12 +76,7 @@ fun OnboardingScreen(vm: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             Spacer(Modifier.height(24.dp))
-            Box(
-                Modifier.size(96.dp).clip(CircleShape).background(scheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(AppIcons.Drop, null, tint = scheme.onPrimary, modifier = Modifier.size(52.dp))
-            }
+            AppLogo(112.dp)
             Text("PocketDrop", style = MaterialTheme.typography.displaySmall)
             Text(
                 "Earn Twitch drops in the background. No video, barely any battery.",

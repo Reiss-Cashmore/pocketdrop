@@ -1,3 +1,5 @@
+<img src="art/pocketdrop.svg" width="96" alt="PocketDrop icon">
+
 # PocketDrop
 
 Earn Twitch drops in the background on Android. No video is streamed: PocketDrop sends Twitch

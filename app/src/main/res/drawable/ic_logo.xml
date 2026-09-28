@@ -2,11 +2,18 @@
 <!-- Generated with art/pocketdrop.svg: a loot drop falling into a stitched pocket. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <group android:translateX="18" android:translateY="16" android:scaleX="0.75" android:scaleY="0.75">
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path android:pathData="M24,0 H72 A24,24 0 0,1 96,24 V72 A24,24 0 0,1 72,96 H24 A24,24 0 0,1 0,72 V24 A24,24 0 0,1 24,0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="96" android:endY="96">
+                <item android:offset="0" android:color="#8B5CF6" />
+                <item android:offset="1" android:color="#3B1A96" />
+            </gradient>
+        </aapt:attr>
+    </path>
     <path android:fillColor="#E6FFFFFF" android:pathData="M76,17 C76.672,21.32 77.68,22.328 82,23 C77.68,23.672 76.672,24.68 76,29 C75.328,24.68 74.32,23.672 70,23 C74.32,22.328 75.328,21.32 76,17 Z M22,26 C22.448,28.88 23.12,29.552 26,30 C23.12,30.448 22.448,31.12 22,34 C21.552,31.12 20.88,30.448 18,30 C20.88,29.552 21.552,28.88 22,26 Z M80,32.2 C80.3136,34.216 80.784,34.6864 82.8,35 C80.784,35.3136 80.3136,35.784 80,37.8 C79.6864,35.784 79.216,35.3136 77.2,35 C79.216,34.6864 79.6864,34.216 80,32.2 Z" />
     <path android:pathData="M48,14 C48,14 34.5,30 34.5,41.5 A13.5,13.5 0 0,0 61.5,41.5 C61.5,30 48,14 48,14 Z">
         <aapt:attr name="android:fillColor">
@@ -29,5 +36,4 @@
             </gradient>
         </aapt:attr>
     </path>
-    </group>
 </vector>

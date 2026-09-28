@@ -79,7 +79,7 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
         )
 
     ScreenList {
-        item { ScreenHeader("PocketDrop", account.login?.let { "Signed in as $it" }) }
+        item { ScreenHeader("PocketDrop", account.login?.let { "Signed in as $it" }, leading = { AppLogo(48.dp) }) }
         item { HeroCard(status, games, perms, onOpenGames) }
         item { SetupChecklist(games, perms, onOpenGames, vm) }
         item {

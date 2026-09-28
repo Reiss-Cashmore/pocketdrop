@@ -42,7 +42,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
+import dev.dropspike.R
 import dev.dropspike.twitch.WatchedGame
 
 /** A titled card; the building block of every screen. */
@@ -84,8 +87,17 @@ internal fun Section(
 
 /** Screen title with an optional line under it. */
 @Composable
-internal fun ScreenHeader(title: String, subtitle: String? = null, trailing: @Composable () -> Unit = {}) {
+internal fun ScreenHeader(
+    title: String,
+    subtitle: String? = null,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: @Composable () -> Unit = {},
+) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (leading != null) {
+            leading()
+            Spacer(Modifier.width(14.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.headlineMedium)
             if (subtitle != null) {
@@ -95,6 +107,11 @@ internal fun ScreenHeader(title: String, subtitle: String? = null, trailing: @Co
         trailing()
     }
 }
+
+/** The PocketDrop mark (art/pocketdrop.svg): a loot drop falling into a stitched pocket. */
+@Composable
+internal fun AppLogo(size: Dp, modifier: Modifier = Modifier) =
+    Image(painterResource(R.drawable.ic_logo), contentDescription = "PocketDrop", modifier = modifier.size(size))
 
 @Composable
 internal fun StatusLine(ok: Boolean?, text: String) {
