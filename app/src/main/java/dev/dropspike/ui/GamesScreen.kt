@@ -116,6 +116,14 @@ fun GamesScreen(vm: MainViewModel) {
         }
         item {
             Section("Background checks", "Start mining on its own when a game goes live", icon = AppIcons.Schedule) {
+                SettingRow(
+                    "Auto mine",
+                    if (state.autoMine) "Starts mining by itself whenever PocketDrop wakes up: each check, opening the app, a restart or an update"
+                    else "Checks only send a notification; you tap to start",
+                    icon = AppIcons.Bolt,
+                ) {
+                    Switch(checked = state.autoMine, onCheckedChange = vm::setAutoMine)
+                }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     WAKE_CHOICES.forEachIndexed { i, (minutes, label) ->
                         SegmentedButton(
@@ -125,8 +133,14 @@ fun GamesScreen(vm: MainViewModel) {
                         ) { Text(label) }
                     }
                 }
+                if (state.wakeIntervalMin == 0 && state.autoMine) {
+                    Hint("With checks off, auto mine only runs when you open the app.")
+                }
                 if (state.wakeIntervalMin > 0) {
-                    Hint("Mining stops by itself after 10 idle minutes and the next check starts it again. Android may run checks late while the phone sleeps.")
+                    Hint(
+                        if (state.autoMine) "Mining stops by itself after 10 idle minutes and the next check starts it again. Android may run checks late while the phone sleeps."
+                        else "Mining stops by itself after 10 idle minutes. Android may run checks late while the phone sleeps.",
+                    )
                     SettingRow("Last check", state.lastWakeCheck.ifEmpty { "Not yet" }, icon = AppIcons.Schedule)
                     if (!perms.batteryOk) {
                         SettingRow("Allow background use", "Without it Android only lets checks send a tap-to-start notification") {

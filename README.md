@@ -8,7 +8,9 @@ channels for the games you choose, and claims finished drops automatically.
   in progress.
 - **Games:** your watch list (mined first, in order), a searchable box-art picker of every game
   with an active campaign, account-link warnings, and an optional background check (30 min to
-  2 h) that starts mining when a watched game goes live.
+  2 h). With **Auto mine** on (the default), mining starts by itself whenever the app wakes up
+  and a watched game is live: on each check, when you open the app, and after a reboot or an
+  update. Tapping Stop pauses auto mine for an hour.
 - **Settings:** account, background permissions, appearance, a full shareable diagnostics
   report, and advanced tools.
 

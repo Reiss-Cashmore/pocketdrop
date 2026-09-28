@@ -32,7 +32,8 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val app = DropSpikeApp.instance
         val prefs = app.prefs
         val stamp = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())
-        DiagLog.i("wake: check started (attempt $runAttemptCount, every ${prefs.wakeIntervalMin} min, id ${id.toString().take(8)})")
+        val trigger = inputData.getString(KEY_TRIGGER) ?: "every ${prefs.wakeIntervalMin} min"
+        DiagLog.i("wake: check started ($trigger, attempt $runAttemptCount, auto mine ${if (prefs.autoMine) "on" else "off"}, id ${id.toString().take(8)})")
         SystemInfo.power(applicationContext).filter { it.first.startsWith("Battery") || it.first.startsWith("App standby") || it.first.startsWith("Device idle") }
             .forEach { (k, v) -> DiagLog.i("wake: $k = $v") }
         if (prefs.authToken == null) {
@@ -59,7 +60,18 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             DiagLog.i("wake: nothing to mine")
             return Result.success()
         }
-        val started = runCatching { MinerService.start(applicationContext, reason = "wake check: $found") }
+        if (prefs.autoMine && AutoMine.paused(prefs)) {
+            prefs.lastWakeCheck = "$stamp · $found · paused after Stop"
+            DiagLog.i("wake: $found → auto mine paused after Stop, not starting")
+            return Result.success()
+        }
+        if (!prefs.autoMine) {
+            prefs.lastWakeCheck = "$stamp · $found · auto mine off, sent notification"
+            DiagLog.i("wake: $found → auto mine is off, notifying")
+            notifyAvailable(found)
+            return Result.success()
+        }
+        val started = runCatching { MinerService.start(applicationContext, reason = "wake check ($trigger): $found") }
         prefs.lastWakeCheck = "$stamp · $found · ${if (started.isSuccess) "started mining" else "sent notification"}"
         DiagLog.i("wake: $found → ${started.exceptionOrNull()?.let { "start blocked (${it.javaClass.simpleName}), notifying" } ?: "started mining"}")
         if (started.isFailure) notifyAvailable(found)
@@ -84,6 +96,7 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     companion object {
         private const val NAME = "wake-check"
+        const val KEY_TRIGGER = "trigger"
         private const val NOTIFY_ID = 2
 
         /** WorkManager's view of the check, for the report. */

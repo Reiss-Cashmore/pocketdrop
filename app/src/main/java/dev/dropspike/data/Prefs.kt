@@ -89,6 +89,16 @@ class Prefs(context: Context) {
         get() = sp.getInt("wake_interval", 0)
         set(v) = sp.edit { putInt("wake_interval", v) }
 
+    /** Start mining without a tap whenever the app wakes (background check, app opened, reboot, update). */
+    var autoMine: Boolean
+        get() = sp.getBoolean("auto_mine", true)
+        set(v) = sp.edit { putBoolean("auto_mine", v) }
+
+    /** Epoch millis until which auto mine holds off, after the user taps Stop. */
+    var autoMinePausedUntil: Long
+        get() = sp.getLong("auto_mine_paused_until", 0L)
+        set(v) = sp.edit { putLong("auto_mine_paused_until", v) }
+
     /** Material You wallpaper colours instead of the PocketDrop palette. */
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamic_color", false)

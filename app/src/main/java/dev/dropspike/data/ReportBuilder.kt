@@ -66,6 +66,7 @@ object ReportBuilder {
         kv("Watched games", prefs.watchedGames.mapIndexed { i, g -> "${i + 1}. ${g.name} [${g.slug}]" }.joinToString("  ").ifEmpty { "none" })
         kv("Only mine watched games", prefs.onlyWatched)
         kv("Background check", if (prefs.wakeIntervalMin == 0) "off" else "every ${prefs.wakeIntervalMin} min")
+        kv("Auto mine", prefs.autoMine)
         kv("Game list", "${prefs.gameCatalog.size} games, updated ${SystemInfo.time(prefs.gameCatalogAt)}")
 
         section("Power, permissions, network")

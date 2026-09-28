@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.UptimeLog
+import dev.dropspike.service.AutoMine
 import dev.dropspike.service.MinerService
 import dev.dropspike.service.MinerState
 import dev.dropspike.service.MinerStatus
@@ -181,12 +182,28 @@ private fun HeroCard(status: MinerStatus, games: GamesState, perms: PermissionSt
                     if (prefs.sessionActive) {
                         StatusLine(false, "The last session ended unexpectedly at ${formatTime(prefs.lastTickAt)}")
                     }
+                    if (games.autoMine) {
+                        val checking by AutoMine.checking.collectAsStateWithLifecycle()
+                        Text(
+                            when {
+                                checking -> "Auto mine: checking for live drops…"
+                                AutoMine.paused(prefs) -> "Auto mine paused after Stop until ${formatTime(prefs.autoMinePausedUntil)}"
+                                games.lastWakeCheck.isNotEmpty() -> "Auto mine is on · last check ${games.lastWakeCheck}"
+                                else -> "Auto mine is on: mining starts by itself when a game goes live"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
 
             if (status.running) {
                 OutlinedButton(
-                    onClick = { MinerService.stop(context) },
+                    onClick = {
+                        if (prefs.autoMine) AutoMine.pauseAfterStop()
+                        MinerService.stop(context)
+                    },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                 ) {
                     Icon(AppIcons.Stop, null, Modifier.size(18.dp))
@@ -198,6 +215,7 @@ private fun HeroCard(status: MinerStatus, games: GamesState, perms: PermissionSt
                     onClick = {
                         if (!perms.notificationsOk) perms.requestNotifications()
                         prefs.sessionActive = false
+                        prefs.autoMinePausedUntil = 0
                         MinerService.start(context)
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -226,7 +244,7 @@ private fun SetupChecklist(games: GamesState, perms: PermissionState, onOpenGame
     val todo = buildList {
         if (!perms.notificationsOk) add(Triple("Allow notifications", "Needed to keep mining in the background", "Allow" to perms.requestNotifications))
         if (!perms.batteryOk) add(Triple("Allow background use", "Otherwise Android pauses mining when the screen is off", "Allow" to perms.requestBattery))
-        if (games.wakeIntervalMin == 0) add(Triple("Check for live drops automatically", "Start mining on its own when a watched game goes live", "Turn on" to { vm.setWakeInterval(60) }))
+        if (!games.autoMine || games.wakeIntervalMin == 0) add(Triple("Mine automatically", "Start mining on its own when a watched game goes live", "Turn on" to { vm.setAutoMine(true) }))
         if (games.watched.isEmpty()) add(Triple("Choose your games", "Mined first, as soon as they're live", "Choose" to onOpenGames))
     }
     if (todo.isEmpty()) return

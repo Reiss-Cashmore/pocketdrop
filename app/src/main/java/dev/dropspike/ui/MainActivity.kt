@@ -19,4 +19,9 @@ class MainActivity : ComponentActivity() {
             DropSpikeTheme(dynamicColor = dynamic) { PocketDropApp(vm) }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        vm.autoMineCheck("app opened")
+    }
 }

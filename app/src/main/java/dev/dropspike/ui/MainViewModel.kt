@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
 import dev.dropspike.data.Prefs
+import dev.dropspike.service.AutoMine
 import dev.dropspike.service.WakeWorker
 import dev.dropspike.twitch.ApiOrigin
 import dev.dropspike.twitch.BrowserProbe
@@ -60,6 +61,7 @@ data class GamesState(
     val onlyWatched: Boolean = false,
     val wakeIntervalMin: Int = 0,
     val lastWakeCheck: String = "",
+    val autoMine: Boolean = true,
 )
 
 data class InventoryState(
@@ -105,6 +107,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onlyWatched = prefs.onlyWatched,
         wakeIntervalMin = prefs.wakeIntervalMin,
         lastWakeCheck = prefs.lastWakeCheck,
+        autoMine = prefs.autoMine,
     )
 
     /** Re-read settings the background check may have changed (e.g. its last result). */
@@ -159,6 +162,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         reloadGames()
     }
 
+    /** Auto mine on (with a background check, 30 min unless one is already set) or off. */
+    fun setAutoMine(on: Boolean) {
+        prefs.autoMine = on
+        prefs.autoMinePausedUntil = 0
+        DiagLog.i("auto mine: turned ${if (on) "on" else "off"}")
+        if (on && prefs.wakeIntervalMin == 0) setWakeInterval(30) else reloadGames()
+        if (on) autoMineCheck("auto mine turned on")
+    }
+
+    /** Start mining without a tap if auto mine is on and a watched game is live. */
+    fun autoMineCheck(trigger: String) = viewModelScope.launch {
+        AutoMine.check(getApplication(), trigger)
+        reloadGames()
+    }
+
     private var mintHost: CompletableDeferred<WebView>? = null
 
     /** Called by the screen once the on-screen mint WebView exists. */
@@ -191,6 +209,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** First run after sign-in: fetch the game list quietly so the picker is ready. */
     private fun warmUpAfterSignIn() {
         refreshInventory()
+        autoMineCheck("signed in")
         if (prefs.gameCatalog.isEmpty() || System.currentTimeMillis() - prefs.gameCatalogAt > 6 * 60 * 60 * 1000L) {
             refreshGameCatalog()
         }
