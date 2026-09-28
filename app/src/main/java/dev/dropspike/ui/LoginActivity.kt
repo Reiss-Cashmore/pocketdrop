@@ -1,10 +1,15 @@
 package dev.dropspike.ui
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
+import android.text.TextUtils
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
@@ -15,168 +20,103 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.BottomAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.Button
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
-import kotlinx.coroutines.delay
+import dev.dropspike.data.Prefs
 
 /**
  * Twitch's normal login page in a WebView. We never see the password: we wait for Twitch
- * to set its `auth-token` cookie and take that. Everything the page does is logged to
- * Diagnostics, because a blank page here tells us nothing on its own.
+ * to set its `auth-token` cookie and take that.
+ *
+ * Deliberately plain Android views, not Compose: on a Pixel 10 Pro Fold (Android 17, Vanadium
+ * WebView 154) a WebView hosted in Compose loaded the page (DOM present) but never drew.
  */
-class LoginActivity : ComponentActivity() {
+class LoginActivity : Activity() {
 
-    private var webView: WebView? = null
-    private var defaultUserAgent: String = ""
+    private lateinit var webView: WebView
+    private lateinit var urlText: TextView
+    private lateinit var progress: ProgressBar
+    private var defaultUserAgent = ""
+    private var desktop = false
+    private var software = false
     private var consoleLines = 0
+    private var done = false
 
-    @OptIn(ExperimentalMaterial3Api::class)
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        DiagLog.i("login: opened (WebView ${WebView.getCurrentWebViewPackage()?.versionName})")
-        setContent {
-            DropSpikeTheme {
-                var progress by remember { mutableIntStateOf(0) }
-                var url by remember { mutableStateOf("") }
-                var desktop by remember { mutableStateOf(false) }
-                var software by remember { mutableStateOf(false) }
-
-                Scaffold(
-                    topBar = {
-                        TopAppBar(
-                            title = {
-                                Column {
-                                    Text("Sign in to Twitch")
-                                    Text(
-                                        url.ifEmpty { "Loading…" },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            },
-                            navigationIcon = {
-                                IconButton(onClick = { finish() }) { Icon(Icons.Default.Close, "Cancel") }
-                            },
-                            actions = {
-                                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, "Reload") }
-                            },
-                        )
-                    },
-                    bottomBar = {
-                        BottomAppBar {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                FilterChip(
-                                    selected = desktop,
-                                    onClick = {
-                                        desktop = !desktop
-                                        setDesktopMode(desktop)
-                                        webView?.loadUrl(LOGIN_URL)
-                                    },
-                                    label = { Text("Desktop site") },
-                                )
-                                FilterChip(
-                                    selected = url.startsWith("https://m.twitch.tv"),
-                                    onClick = { webView?.loadUrl(MOBILE_LOGIN_URL) },
-                                    label = { Text("Mobile site") },
-                                )
-                                FilterChip(
-                                    selected = software,
-                                    onClick = {
-                                        software = !software
-                                        // Tells a GPU/compositing problem apart from a page that never renders.
-                                        webView?.setLayerType(if (software) View.LAYER_TYPE_SOFTWARE else View.LAYER_TYPE_HARDWARE, null)
-                                        DiagLog.i("login: software rendering ${if (software) "on" else "off"}")
-                                    },
-                                    label = { Text("Software") },
-                                )
-                            }
-                        }
-                    },
-                ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) {
-                        AndroidView(
-                            modifier = Modifier.fillMaxSize(),
-                            factory = { ctx ->
-                                createWebView(ctx, onProgress = { progress = it }, onUrl = { url = it })
-                                    .also { it.loadUrl(LOGIN_URL) }
-                            },
-                        )
-                        if (progress in 1..99) {
-                            LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                }
-
-                // Twitch's login is a single-page app, so poll the cookie jar rather than
-                // relying on navigation callbacks.
-                LaunchedEffect(Unit) {
-                    while (true) {
-                        val cookies = readCookies()
-                        val token = cookies["auth-token"]
-                        if (!token.isNullOrBlank()) {
-                            val prefs = DropSpikeApp.instance.prefs
-                            cookies["unique_id"]?.takeIf { it.isNotBlank() }?.let { prefs.deviceId = it }
-                            prefs.authToken = token
-                            DiagLog.i("login: got auth-token cookie (unique_id ${if (cookies.containsKey("unique_id")) "present" else "absent"})")
-                            setResult(RESULT_OK)
-                            finish()
-                            break
-                        }
-                        delay(1_000)
-                    }
-                }
-            }
+    private val cookiePoll = object : Runnable {
+        override fun run() {
+            if (done) return
+            if (!checkForToken()) webView.postDelayed(this, 1_000)
         }
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        DiagLog.i("login: opened, plain views (WebView ${WebView.getCurrentWebViewPackage()?.versionName})")
+
+        val dp = resources.displayMetrics.density
+        fun button(label: String, onClick: () -> Unit) = Button(this).apply {
+            text = label
+            isAllCaps = false
+            setOnClickListener { onClick() }
+        }
+
+        urlText = TextView(this).apply {
+            text = "Loading…"
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), 0)
+        }
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(button("Close") { finish() })
+            addView(button("Reload") { webView.reload() })
+            addView(button("Desktop site") {
+                desktop = !desktop
+                setDesktopMode(desktop)
+                webView.loadUrl(LOGIN_URL)
+            })
+            addView(button("Mobile site") { webView.loadUrl(MOBILE_LOGIN_URL) })
+            addView(button("Software") {
+                software = !software
+                webView.setLayerType(if (software) View.LAYER_TYPE_SOFTWARE else View.LAYER_TYPE_HARDWARE, null)
+                DiagLog.i("login: software rendering ${if (software) "on" else "off"}")
+            })
+        }
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        webView = createWebView()
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            // Grey, so a WebView that doesn't draw is distinguishable from the app's dark background.
+            setBackgroundColor(Color.rgb(0x9A, 0x9A, 0xA0))
+            addView(urlText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(HorizontalScrollView(this@LoginActivity).apply { addView(buttons) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(progress, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(webView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        }
+        // Keep content clear of the status and navigation bars on edge-to-edge Android.
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
+            insets
+        }
+        setContentView(root)
+
+        webView.loadUrl(LOGIN_URL)
+        webView.post(cookiePoll)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(
-        ctx: android.content.Context,
-        onProgress: (Int) -> Unit,
-        onUrl: (String) -> Unit,
-    ): WebView = WebView(ctx).apply {
-        webView = this
-        // White, so "nothing rendered" can be told apart from Twitch's dark theme.
+    private fun createWebView(): WebView = WebView(this).apply {
         setBackgroundColor(Color.WHITE)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -187,10 +127,12 @@ class LoginActivity : ComponentActivity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
         webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) = onProgress(newProgress)
+            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                progress.progress = newProgress
+                progress.visibility = if (newProgress in 1..99) View.VISIBLE else View.INVISIBLE
+            }
 
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                // Errors and warnings only, capped, so the log stays readable.
                 val level = message.messageLevel()
                 if ((level == ConsoleMessage.MessageLevel.ERROR || level == ConsoleMessage.MessageLevel.WARNING) && consoleLines < 25) {
                     consoleLines++
@@ -203,16 +145,17 @@ class LoginActivity : ComponentActivity() {
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 DiagLog.i("login: page started $url")
-                url?.let(onUrl)
+                urlText.text = url
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
                 DiagLog.i("login: page finished $url")
-                url?.let(onUrl)
-                // What actually rendered: an empty body means the page never drew anything.
+                urlText.text = url
                 view.evaluateJavascript(
                     "(function(){var b=document.body;return document.readyState+' | title='+document.title+' | bodyText='+(b?b.innerText.length:-1)+' | elements='+document.getElementsByTagName('*').length})()",
                 ) { DiagLog.i("login: page state $it") }
+                // Size and attachment of the view itself, for the drawing problem.
+                DiagLog.i("login: view ${view.width}x${view.height}, attached=${view.isAttachedToWindow}, hwAccel=${view.isHardwareAccelerated}")
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -228,26 +171,40 @@ class LoginActivity : ComponentActivity() {
             }
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                // Without this the whole app would crash with the renderer.
                 DiagLog.i("login: WebView renderer gone (crashed=${detail.didCrash()})")
-                webView = null
+                done = true
                 finish()
                 return true
             }
         }
     }
 
+    /** Twitch's login is a single-page app, so poll the cookie jar instead of watching navigation. */
+    private fun checkForToken(): Boolean {
+        val cookies = readCookies()
+        val token = cookies["auth-token"]
+        if (token.isNullOrBlank()) return false
+        val prefs = DropSpikeApp.instance.prefs
+        cookies["unique_id"]?.takeIf { it.isNotBlank() }?.let { prefs.deviceId = it }
+        prefs.authToken = token
+        prefs.clientId = Prefs.WEB_CLIENT_ID
+        DiagLog.i("login: got auth-token cookie (unique_id ${if (cookies.containsKey("unique_id")) "present" else "absent"})")
+        done = true
+        setResult(RESULT_OK)
+        finish()
+        return true
+    }
+
     private fun setDesktopMode(on: Boolean) {
-        val view = webView ?: return
-        view.settings.userAgentString = if (on) DESKTOP_UA else defaultUserAgent
-        view.settings.useWideViewPort = on
-        view.settings.loadWithOverviewMode = on
+        webView.settings.userAgentString = if (on) DESKTOP_UA else defaultUserAgent
+        webView.settings.useWideViewPort = on
+        webView.settings.loadWithOverviewMode = on
         DiagLog.i("login: desktop mode ${if (on) "on" else "off"}")
     }
 
     override fun onDestroy() {
-        webView?.destroy()
-        webView = null
+        done = true
+        webView.destroy()
         super.onDestroy()
     }
 

@@ -56,6 +56,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -124,7 +125,7 @@ fun HomeScreen(vm: MainViewModel) {
                 item { BackgroundCard(vm) }
                 item { LogCard() }
             }
-            MintOverlay(vm, Modifier.align(Alignment.BottomCenter))
+            MintOverlay(vm)
         }
     }
 }
@@ -338,26 +339,33 @@ private fun IntegrityCard(vm: MainViewModel) {
 }
 
 /**
- * On-screen mint WebView, drawn over the list rather than inside it so scrolling or
- * recomposing the list can't tear it down mid-mint. The view model does the minting.
+ * On-screen mint WebView, shown in a plain Android dialog window rather than inside Compose:
+ * on Android 17 with Vanadium, WebViews hosted in Compose loaded pages but never drew.
+ * The view model does the minting; this only supplies the view.
  */
 @Composable
-private fun MintOverlay(vm: MainViewModel, modifier: Modifier) {
+private fun MintOverlay(vm: MainViewModel) {
     val state by vm.integrity.collectAsStateWithLifecycle()
     val pending = state.pendingVisibleMint ?: return
-    ElevatedCard(modifier.widthIn(max = 720.dp).fillMaxWidth().padding(16.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Running Twitch's security check…", style = MaterialTheme.typography.titleSmall)
-            key(pending) {
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(12.dp)),
-                    factory = { ctx ->
-                        WebView(ctx).apply { setBackgroundColor(android.graphics.Color.WHITE) }
-                            .also(vm::attachMintHost)
-                    },
-                    onRelease = { it.destroy() },
-                )
-            }
+    val context = LocalContext.current
+    DisposableEffect(pending) {
+        val dp = context.resources.displayMetrics.density
+        val webView = WebView(context).apply { setBackgroundColor(android.graphics.Color.WHITE) }
+        val layout = android.widget.LinearLayout(context).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
+            addView(android.widget.TextView(context).apply { text = "Running Twitch's security check…" })
+            addView(webView, android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, (320 * dp).toInt()))
+        }
+        val dialog = android.app.Dialog(context).apply {
+            setContentView(layout)
+            setCancelable(false)
+            show()
+        }
+        vm.attachMintHost(webView)
+        onDispose {
+            dialog.dismiss()
+            webView.destroy()
         }
     }
 }

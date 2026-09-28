@@ -94,7 +94,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 prefs.login = info.login
                 prefs.userId = info.userId
                 prefs.clientId = info.clientId
-                DiagLog.i("account: ${info.login}, client ${info.clientId}, expires in ${info.expiresInSec}s")
+                DiagLog.i("account: ${info.login}, client ${info.clientId}, ${if (info.expiresInSec == 0L) "never expires" else "expires in ${info.expiresInSec}s"}")
                 _account.value = AccountState(login = info.login, clientId = info.clientId)
             }
             .onFailure { e ->
@@ -216,7 +216,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             prefs.integrityToken = t.token
             prefs.integrityExpiry = t.expiresAtMs
             val mins = (t.expiresAtMs - System.currentTimeMillis()) / 60_000
-            DiagLog.i("mint: ok, expires in ${mins}min, is_bad_bot=${t.isBadBot}, claims keys=${t.claims?.keys()?.asSequence()?.toList()}")
+            DiagLog.i("mint: ok, expires in ${mins}min, is_bad_bot=${t.isBadBot}, claims keys=${t.claims?.keys()?.asSequence()?.toList()}, format=${t.token.split('.').take(2).joinToString(".").take(24)}…")
             t.probe?.let { DiagLog.i("mint: in-WebView probe HTTP ${it.status}, campaigns=${it.campaigns}, errors=${it.errors}") }
             _integrity.update {
                 it.copy(busy = false, pendingVisibleMint = null, expiresAt = t.expiresAtMs, isBadBot = t.isBadBot, probe = t.probe, error = null)
@@ -241,7 +241,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         rows += GateResult(
             "Token still valid",
             v.isSuccess,
-            v.fold({ "yes, ${it.login}, client ${it.clientId.take(6)}…, ${it.expiresInSec / 3600}h left" }, { it.message ?: it.toString() }),
+            v.fold({ "yes, ${it.login}, client ${it.clientId.take(6)}…, ${if (it.expiresInSec == 0L) "no expiry" else "${it.expiresInSec / 3600}h left"}" }, { it.message ?: it.toString() }),
         )
 
         val inv = runCatching { api.inventory() }
