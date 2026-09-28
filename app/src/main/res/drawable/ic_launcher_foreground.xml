@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A water drop centred in the 72dp adaptive-icon safe zone. -->
+<!-- A drop resting in a pocket curve, inside the 72dp adaptive-icon safe zone. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -7,5 +7,11 @@
     android:viewportHeight="108">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M54,30 C54,30 38,50 38,61 A16,16 0 0,0 70,61 C70,50 54,30 54,30 Z" />
+        android:pathData="M54,27 C54,27 38,46.5 38,57.5 A16,16 0 0,0 70,57.5 C70,46.5 54,27 54,27 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M34,80 Q54,90 74,80" />
 </vector>

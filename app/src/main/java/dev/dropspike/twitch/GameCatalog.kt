@@ -19,11 +19,17 @@ object GameCatalog {
                 ?.groupBy { it.gameId.ifEmpty { it.game.lowercase() } }
                 ?.map { (_, cs) ->
                     val c = cs.first()
-                    WatchedGame(c.gameId, c.game, c.gameSlug ?: slugOf(c.game), cs.size)
+                    // Linked (or no link required) if any campaign says so; otherwise the game can't earn.
+                    val needsLink = cs.all { it.linked == false }
+                    WatchedGame(
+                        c.gameId, c.game, c.gameSlug ?: slugOf(c.game), cs.size,
+                        needsLink = needsLink,
+                        linkUrl = if (needsLink) cs.firstNotNullOfOrNull { it.linkUrl } else null,
+                    )
                 }
                 ?: throw IllegalStateException("Twitch hid the campaign list (${result.errors.joinToString().ifEmpty { "integrity check failed" }})")
         } else {
-            throw IllegalStateException("No integrity token: mint one in step 2, then refresh")
+            throw IllegalStateException("Couldn't unlock the campaign list. Try again, or mint a token in Settings → Advanced.")
         }
         val fromInventory = runCatching { api.inventoryCampaigns() }.getOrDefault(emptyList())
             .filter { it.endsAtMs > now }
@@ -31,11 +37,14 @@ object GameCatalog {
 
         val merged = (fromDashboard + fromInventory)
             .groupBy { it.id.ifEmpty { it.name.lowercase() } }
-            .map { (_, gs) -> gs.maxBy { it.campaigns } }
+            // Inventory entries are in progress, so they are linked: they override "needs link".
+            .map { (_, gs) -> gs.maxBy { it.campaigns }.let { best -> if (gs.any { it.campaigns == 0 }) best.copy(needsLink = false) else best } }
             .sortedBy { it.name.lowercase() }
         prefs.gameCatalog = merged
         prefs.gameCatalogAt = now
-        DiagLog.i("games: ${merged.size} games with active campaigns")
+        DiagLog.i("games: ${merged.size} games with active campaigns, ${merged.count { it.needsLink }} need an account link: ${merged.filter { it.needsLink }.joinToString { it.name }}")
+        // Keep the watch list's link status in step with the catalogue.
+        prefs.watchedGames = prefs.watchedGames.map { w -> merged.firstOrNull { it.slug == w.slug } ?: w }
         merged
     }
 }

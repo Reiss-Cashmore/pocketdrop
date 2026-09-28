@@ -23,9 +23,29 @@ import dev.dropspike.twitch.slugOf
  * adds it to the inventory. Finished drops are claimed (integrity-gated; the token is
  * renewed off screen first).
  */
+/** Snapshot of the current target for the UI. [drop] is null until Twitch starts the campaign. */
+data class MiningNow(
+    val game: WatchedGame,
+    val channel: String,
+    val viewers: Int,
+    val campaign: String?,
+    val drop: String?,
+    val minutes: Int,
+    val required: Int,
+    val since: Long,
+)
+
 class Miner(private val context: Context, private val prefs: Prefs, private val api: TwitchApi) {
 
     private data class Target(val game: WatchedGame, val stream: LiveStream, val spadeUrl: String)
+
+    /** What is being mined right now, for the home screen. */
+    var now: MiningNow? = null
+        private set
+
+    /** The inventory as of the last tick, so the UI doesn't have to fetch it again. */
+    var campaigns: List<InvCampaign> = emptyList()
+        private set
 
     private var target: Target? = null
     private var lastMinutes = -1
@@ -69,6 +89,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         } catch (e: Exception) {
             return MinuteStatus.Failed to "Inventory failed: ${e.message}"
         }
+        this.campaigns = campaigns
         val openCount = campaigns.sumOf { openDrops(it).size }
         val doneUnclaimed = campaigns.sumOf { c -> c.drops.count { it.done && !it.claimed } }
         DiagLog.i("miner: inventory ${campaigns.size} campaigns, $openCount open drops, $doneUnclaimed finished-unclaimed")
@@ -82,6 +103,11 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             DiagLog.i("miner: ${t.game.name} unclaimed minutes $lastMinutes → $minutes (${if (credited) "credited" else "no change"}), ${ticksWithoutCredit + if (credited) 0 else 1} min without credit, ${ticksOnTarget} min on ${t.stream.login}")
             lastMinutes = minutes
             ticksWithoutCredit = if (credited) 0 else ticksWithoutCredit + 1
+            if (ticksWithoutCredit == 3) {
+                // Is Twitch still counting towards something else (e.g. a finished campaign)?
+                val session = runCatching { api.currentDrop(t.stream.channelId) }.getOrElse { "failed: ${it.message}" }
+                DiagLog.i("miner: 3 min without credit on ${t.stream.login}; Twitch current drop session: $session")
+            }
             val reason = when {
                 // Twitch credits in bursts, but 6 minutes without progress means this isn't counting.
                 ticksWithoutCredit >= 6 -> "no progress in 6 min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
@@ -105,6 +131,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             DiagLog.i("miner: watching ${it.stream.login} for ${it.game.name}")
         }
         if (t == null) {
+            now = null
             idleTicks++
             describe = "Nothing to mine right now"
             return MinuteStatus.Idle to "No watched or in-progress game has a live drops channel"
@@ -112,6 +139,19 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         idleTicks = 0
         ticksOnTarget++
 
+        val drop = campaigns.filter { t.game.matches(it.gameId, it.gameName) }
+            .flatMap { c -> openDrops(c).map { c to it } }
+            .maxByOrNull { (_, d) -> d.minutes.toFloat() / d.required }
+        now = MiningNow(
+            game = t.game.copy(id = t.game.id.ifEmpty { t.stream.gameId }),
+            channel = t.stream.login,
+            viewers = t.stream.viewers,
+            campaign = drop?.first?.name,
+            drop = drop?.second?.name,
+            minutes = drop?.second?.minutes ?: 0,
+            required = drop?.second?.required ?: 0,
+            since = now?.takeIf { it.channel == t.stream.login }?.since ?: System.currentTimeMillis(),
+        )
         val progress = "${t.game.name} · ${progressText(campaigns, t.game)} via ${t.stream.login}"
         describe = progress
         val code = try {
@@ -141,8 +181,10 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     private fun candidates(campaigns: List<InvCampaign>): List<WatchedGame> {
         val now = System.currentTimeMillis()
         val watched = prefs.watchedGames.filter {
-            // A watched game is worth trying unless its campaigns are in the inventory and fully earned.
-            !hasCampaign(campaigns, it) || hasOpenDrops(campaigns, it)
+            // A watched game is worth trying unless its campaigns are in the inventory and fully earned,
+            // or none of its campaigns can earn because the game account isn't linked.
+            (!hasCampaign(campaigns, it) || hasOpenDrops(campaigns, it)) &&
+                !(it.needsLink && !hasCampaign(campaigns, it))
         }
         val inProgress = if (prefs.onlyWatched) emptyList() else campaigns
             .filter { it.endsAtMs > now }
@@ -158,8 +200,10 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val list = candidates(campaigns)
         val now = System.currentTimeMillis()
         val cooling = cooldown.filterValues { it > now }.keys
+        val unlinked = prefs.watchedGames.filter { it.needsLink && !hasCampaign(campaigns, it) }
         DiagLog.i(
             "miner: choosing from ${list.size} candidate game(s): ${list.joinToString { it.name }.ifEmpty { "none" }}" +
+                (if (unlinked.isNotEmpty()) " · skipped, account not linked: ${unlinked.joinToString { it.name }}" else "") +
                 (if (cooling.isNotEmpty()) " · cooling down: ${cooling.joinToString()}" else "") +
                 " · watched=${prefs.watchedGames.size}, onlyWatched=${prefs.onlyWatched}",
         )

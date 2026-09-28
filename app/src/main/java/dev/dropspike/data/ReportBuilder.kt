@@ -39,7 +39,7 @@ object ReportBuilder {
             out.append("  ").append(s).append('\n')
         }
 
-        out.append("DropSpike diagnostics report\n")
+        out.append("PocketDrop diagnostics report\n")
         kv("Generated", SystemInfo.time(now))
         kv("App", SystemInfo.appVersion(context))
         kv("Device", SystemInfo.device())
@@ -189,6 +189,6 @@ object ReportBuilder {
         val dir = File(context.cacheDir, "reports").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
         val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-        return File(dir, "dropspike-report-$stamp.txt").apply { writeText(text) }
+        return File(dir, "pocketdrop-report-$stamp.txt").apply { writeText(text) }
     }
 }

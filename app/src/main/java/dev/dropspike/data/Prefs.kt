@@ -89,6 +89,11 @@ class Prefs(context: Context) {
         get() = sp.getInt("wake_interval", 0)
         set(v) = sp.edit { putInt("wake_interval", v) }
 
+    /** Material You wallpaper colours instead of the PocketDrop palette. */
+    var dynamicColor: Boolean
+        get() = sp.getBoolean("dynamic_color", false)
+        set(v) = sp.edit { putBoolean("dynamic_color", v) }
+
     var lastWakeCheck: String
         get() = sp.getString("last_wake_check", null).orEmpty()
         set(v) = sp.edit { putString("last_wake_check", v) }
@@ -105,14 +110,20 @@ class Prefs(context: Context) {
     }
 
     private fun encodeGames(games: List<WatchedGame>) = JSONArray().apply {
-        games.forEach { put(JSONObject().put("id", it.id).put("name", it.name).put("slug", it.slug).put("campaigns", it.campaigns)) }
+        games.forEach { put(
+                JSONObject().put("id", it.id).put("name", it.name).put("slug", it.slug).put("campaigns", it.campaigns)
+                    .put("needsLink", it.needsLink).put("linkUrl", it.linkUrl ?: ""),
+            ) }
     }.toString()
 
     private fun decodeGames(raw: String?): List<WatchedGame> = runCatching {
         JSONArray(raw ?: return emptyList()).let { a ->
             (0 until a.length()).map { i ->
                 val j = a.getJSONObject(i)
-                WatchedGame(j.optString("id"), j.optString("name"), j.optString("slug"), j.optInt("campaigns"))
+                WatchedGame(
+                    j.optString("id"), j.optString("name"), j.optString("slug"), j.optInt("campaigns"),
+                    needsLink = j.optBoolean("needsLink"), linkUrl = j.optString("linkUrl").ifEmpty { null },
+                )
             }
         }
     }.getOrDefault(emptyList())

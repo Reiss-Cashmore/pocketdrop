@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">DropSpike</string>
-    <string name="channel_miner">Mining session</string>
+    <string name="app_name">PocketDrop</string>
+    <string name="channel_miner">Mining</string>
 </resources>

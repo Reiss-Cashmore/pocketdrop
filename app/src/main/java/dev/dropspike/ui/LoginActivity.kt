@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.content.res.Configuration
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.Gravity
@@ -20,9 +21,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.view.ViewCompat
@@ -62,33 +62,61 @@ class LoginActivity : Activity() {
         DiagLog.i("login: opened, plain views (WebView ${WebView.getCurrentWebViewPackage()?.versionName})")
 
         val dp = resources.displayMetrics.density
-        fun button(label: String, onClick: () -> Unit) = Button(this).apply {
+        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val bg = if (night) Color.rgb(0x11, 0x0E, 0x16) else Color.rgb(0xFD, 0xF7, 0xFF)
+        val fg = if (night) Color.rgb(0xE8, 0xE0, 0xEC) else Color.rgb(0x1D, 0x1A, 0x22)
+        val muted = if (night) Color.rgb(0xCB, 0xC3, 0xD3) else Color.rgb(0x4A, 0x45, 0x52)
+        val accent = if (night) Color.rgb(0xCD, 0xB8, 0xFF) else Color.rgb(0x6A, 0x43, 0xD1)
+        fun textButton(label: String, onClick: (View) -> Unit) = TextView(this).apply {
             text = label
-            isAllCaps = false
-            setOnClickListener { onClick() }
+            setTextColor(accent)
+            textSize = 16f
+            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
+            setOnClickListener { onClick(it) }
         }
 
+        val title = TextView(this).apply {
+            text = "Sign in to Twitch"
+            setTextColor(fg)
+            textSize = 18f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
         urlText = TextView(this).apply {
             text = "Loading…"
+            setTextColor(muted)
+            textSize = 12f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.MIDDLE
-            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), 0)
         }
-        val buttons = LinearLayout(this).apply {
+        val titles = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(title)
+            addView(urlText)
+        }
+        val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(button("Close") { finish() })
-            addView(button("Reload") { webView.reload() })
-            addView(button("Desktop site") {
-                desktop = !desktop
-                setDesktopMode(desktop)
-                webView.loadUrl(LOGIN_URL)
-            })
-            addView(button("Mobile site") { webView.loadUrl(MOBILE_LOGIN_URL) })
-            addView(button("Software") {
-                software = !software
-                webView.setLayerType(if (software) View.LAYER_TYPE_SOFTWARE else View.LAYER_TYPE_HARDWARE, null)
-                DiagLog.i("login: software rendering ${if (software) "on" else "off"}")
+            setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
+            addView(textButton("Cancel") { finish() })
+            addView(titles, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            // Troubleshooting options live in a menu: they're rarely needed.
+            addView(textButton("⋮") { anchor ->
+                PopupMenu(this@LoginActivity, anchor).apply {
+                    menu.add("Reload").setOnMenuItemClickListener { webView.reload(); true }
+                    menu.add(if (desktop) "Mobile layout" else "Desktop layout").setOnMenuItemClickListener {
+                        desktop = !desktop
+                        setDesktopMode(desktop)
+                        webView.loadUrl(LOGIN_URL)
+                        true
+                    }
+                    menu.add("Mobile site (m.twitch.tv)").setOnMenuItemClickListener { webView.loadUrl(MOBILE_LOGIN_URL); true }
+                    menu.add(if (software) "Hardware rendering" else "Software rendering").setOnMenuItemClickListener {
+                        software = !software
+                        webView.setLayerType(if (software) View.LAYER_TYPE_SOFTWARE else View.LAYER_TYPE_HARDWARE, null)
+                        DiagLog.i("login: software rendering ${if (software) "on" else "off"}")
+                        true
+                    }
+                }.show()
             })
         }
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
@@ -96,10 +124,8 @@ class LoginActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            // Grey, so a WebView that doesn't draw is distinguishable from the app's dark background.
-            setBackgroundColor(Color.rgb(0x9A, 0x9A, 0xA0))
-            addView(urlText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            addView(HorizontalScrollView(this@LoginActivity).apply { addView(buttons) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            setBackgroundColor(bg)
+            addView(bar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(progressBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(webView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         }

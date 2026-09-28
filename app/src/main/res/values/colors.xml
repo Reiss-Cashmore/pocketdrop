@@ -1,4 +1,5 @@
 <resources>
-    <color name="background">#FF121016</color>
-    <color name="brand">#FF9146FF</color>
+    <color name="background">#FFFDF7FF</color>
+    <color name="brand">#FF6A43D1</color>
+    <color name="brand_dark">#FF3B1A96</color>
 </resources>

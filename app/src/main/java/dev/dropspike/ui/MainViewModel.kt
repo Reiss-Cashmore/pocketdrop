@@ -16,6 +16,7 @@ import dev.dropspike.twitch.DashboardResult
 import dev.dropspike.twitch.DeviceClient
 import dev.dropspike.twitch.DeviceCode
 import dev.dropspike.twitch.GameCatalog
+import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.twitch.IntegrityMinter
 import dev.dropspike.twitch.IntegrityToken
 import dev.dropspike.twitch.MintPage
@@ -59,6 +60,13 @@ data class GamesState(
     val onlyWatched: Boolean = false,
     val wakeIntervalMin: Int = 0,
     val lastWakeCheck: String = "",
+)
+
+data class InventoryState(
+    val campaigns: List<InvCampaign> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+    val updatedAt: Long = 0,
 )
 
 /** One request in the gate test. [ok]: true = pass, false = fail, null = informational. */
@@ -128,6 +136,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun moveWatchedDown(game: WatchedGame) {
+        val list = prefs.watchedGames.toMutableList()
+        val i = list.indexOfFirst { it.slug == game.slug }
+        if (i in 0 until list.lastIndex) {
+            list.add(i + 1, list.removeAt(i))
+            prefs.watchedGames = list
+            reloadGames()
+        }
+    }
+
     fun setOnlyWatched(on: Boolean) {
         prefs.onlyWatched = on
         DiagLog.i("games: only watched = $on")
@@ -148,6 +166,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         mintHost?.complete(view)
     }
 
+    private val _inventory = MutableStateFlow(InventoryState())
+    val inventory: StateFlow<InventoryState> = _inventory
+
+    private val _dynamicColor = MutableStateFlow(prefs.dynamicColor)
+    val dynamicColor: StateFlow<Boolean> = _dynamicColor
+
+    fun setDynamicColor(on: Boolean) {
+        prefs.dynamicColor = on
+        _dynamicColor.value = on
+    }
+
+    /** Loads the inventory for the home screen (the miner publishes its own copy while running). */
+    fun refreshInventory() {
+        if (prefs.authToken == null || _inventory.value.loading) return
+        _inventory.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch {
+            runCatching { api.inventoryCampaigns() }
+                .onSuccess { list -> _inventory.value = InventoryState(campaigns = list, updatedAt = System.currentTimeMillis()) }
+                .onFailure { e -> _inventory.update { it.copy(loading = false, error = e.message) } }
+        }
+    }
+
+    /** First run after sign-in: fetch the game list quietly so the picker is ready. */
+    private fun warmUpAfterSignIn() {
+        refreshInventory()
+        if (prefs.gameCatalog.isEmpty() || System.currentTimeMillis() - prefs.gameCatalogAt > 6 * 60 * 60 * 1000L) {
+            refreshGameCatalog()
+        }
+    }
+
+    init {
+        // Posted (not immediate) so it runs after every property below is initialised.
+        if (prefs.authToken != null) viewModelScope.launch(Dispatchers.Main) { warmUpAfterSignIn() }
+    }
+
     private val _deviceLogin = MutableStateFlow(DeviceLoginState())
     val deviceLogin: StateFlow<DeviceLoginState> = _deviceLogin
     private var deviceLoginJob: Job? = null
@@ -166,6 +219,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 prefs.clientId = info.clientId
                 DiagLog.i("account: ${info.login}, client ${info.clientId}, ${if (info.expiresInSec == 0L) "never expires" else "expires in ${info.expiresInSec}s"}")
                 _account.value = AccountState(login = info.login, clientId = info.clientId)
+                warmUpAfterSignIn()
             }
             .onFailure { e ->
                 DiagLog.i("account: validate failed: ${e.message}")
@@ -215,6 +269,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _account.value = AccountState()
         _integrity.update { IntegrityState(page = it.page, surface = it.surface) }
         _gate.value = GateState()
+        _inventory.value = InventoryState()
         DiagLog.i("account: signed out")
     }
 

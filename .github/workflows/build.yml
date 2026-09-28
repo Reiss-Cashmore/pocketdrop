@@ -37,16 +37,16 @@ jobs:
           done
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk DropSpike-${{ github.run_number }}.apk
+        run: cp app/build/outputs/apk/release/app-release.apk PocketDrop-${{ github.run_number }}.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DropSpike-apk
-          path: DropSpike-*.apk
+          name: PocketDrop-apk
+          path: PocketDrop-*.apk
 
       # Push a tag like v0.1.0 to publish a release (Obtainium can track these).
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: DropSpike-*.apk
+          files: PocketDrop-*.apk

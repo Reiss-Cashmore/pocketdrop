@@ -28,6 +28,8 @@ data class Campaign(
     val gameId: String = "",
     val gameSlug: String? = null,
     val endsAtMs: Long = Long.MAX_VALUE,
+    /** Where to link the game account, when the campaign needs one. */
+    val linkUrl: String? = null,
 )
 
 /** `campaigns == null` means Twitch returned `dropCampaigns: null`, i.e. the integrity gate. */
@@ -84,7 +86,21 @@ data class InvCampaign(
 )
 
 /** A game the user asked to mine; also the entries of the game picker. */
-data class WatchedGame(val id: String, val name: String, val slug: String, val campaigns: Int = 0) {
+data class WatchedGame(
+    val id: String,
+    val name: String,
+    val slug: String,
+    val campaigns: Int = 0,
+    /** Every active campaign for this game needs a linked game account, and none is linked. */
+    val needsLink: Boolean = false,
+    val linkUrl: String? = null,
+) {
+    /** Twitch box art by game id (IGDB-backed games use the `_IGDB` variant). */
+    fun boxArt(width: Int = 144, height: Int = 192): List<String> = if (id.isEmpty()) emptyList() else listOf(
+        "https://static-cdn.jtvnw.net/ttv-boxart/${id}_IGDB-${width}x$height.jpg",
+        "https://static-cdn.jtvnw.net/ttv-boxart/$id-${width}x$height.jpg",
+    )
+
     fun matches(gameId: String, gameName: String) =
         (id.isNotEmpty() && id == gameId) || name.equals(gameName, ignoreCase = true)
 }
@@ -213,6 +229,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 gameId = c.optJSONObject("game")?.optString("id").orEmpty(),
                 gameSlug = c.optJSONObject("game")?.optString("slug")?.ifEmpty { null },
                 endsAtMs = parseTime(c.optString("endAt")),
+                linkUrl = c.optString("accountLinkURL").takeIf { it.isNotBlank() && it != "null" },
                 status = c.optString("status"),
                 linked = c.optJSONObject("self")?.takeIf { it.has("isAccountConnected") }?.optBoolean("isAccountConnected"),
             )
@@ -352,6 +369,19 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         http.newCall(req).execute().use { it.code }
     }
 
+    /**
+     * What Twitch considers the drop being earned right now on [channelId]
+     * (DropCurrentSessionContext). Diagnostic: shows a session stuck on a finished campaign.
+     */
+    suspend fun currentDrop(channelId: String): String {
+        val root = gql(Queries.currentDrop(channelId), useIntegrity = prefs.integrityToken != null)
+        root.errorMessages().takeIf { it.isNotEmpty() }?.let { return "errors: ${it.joinToString()}" }
+        val session = root.optJSONObject("data")?.optJSONObject("currentUser")?.optJSONObject("dropCurrentSession")
+            ?: return "no current drop session"
+        return "drop ${session.optString("dropID").take(8)}…, ${session.optInt("currentMinutesWatched")}/${session.optInt("requiredMinutesWatched")} min" +
+            (session.optJSONObject("game")?.optString("displayName")?.let { ", game $it" } ?: "")
+    }
+
     /** Claims a finished drop (DropsPage_ClaimDropRewards, integrity-gated). Returns Twitch's status. */
     suspend fun claimDrop(instanceId: String): String {
         val root = gql(Queries.claimDrop(instanceId), useIntegrity = true)
@@ -456,6 +486,12 @@ internal object Queries {
         "VideoPlayerStreamInfoOverlayChannel",
         "198492e0857f6aedead9665c81c5a06d67b25b58034649687124083ff288597d",
         JSONObject().put("channel", login),
+    )
+
+    fun currentDrop(channelId: String) = persisted(
+        "DropCurrentSessionContext",
+        "4d06b702d25d652afb9ef835d2a550031f1cf762b193523a92166f40ea3d142b",
+        JSONObject().put("channelID", channelId).put("channelLogin", ""),
     )
 
     fun claimDrop(instanceId: String) = persisted(

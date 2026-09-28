@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
@@ -13,7 +15,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            DropSpikeTheme { HomeScreen(vm) }
+            val dynamic by vm.dynamicColor.collectAsStateWithLifecycle()
+            DropSpikeTheme(dynamicColor = dynamic) { PocketDropApp(vm) }
         }
     }
 }

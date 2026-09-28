@@ -1,10 +1,11 @@
 <resources>
-    <!-- Only shown before Compose draws (and behind the login WebView); Compose owns real styling. -->
     <style name="Theme.DropSpike" parent="android:Theme.DeviceDefault.DayNight">
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowBackground">@color/background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground">@color/background</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/brand</item>
     </style>
 </resources>

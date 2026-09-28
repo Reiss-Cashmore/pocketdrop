@@ -22,6 +22,7 @@ import dev.dropspike.data.DiagLog
 import dev.dropspike.data.MinuteStatus
 import dev.dropspike.data.SystemInfo
 import dev.dropspike.data.UptimeLog
+import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.ui.MainActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +46,8 @@ data class MinerStatus(
     /** Miner internals for the report. */
     val detail: List<Pair<String, String>> = emptyList(),
     val startedAt: Long = 0,
+    val now: MiningNow? = null,
+    val campaigns: List<InvCampaign> = emptyList(),
 )
 
 object MinerState {
@@ -145,6 +148,8 @@ class MinerService : Service() {
                         lastTickAt = prefs.lastTickAt,
                         summary = miner.describe,
                         detail = miner.detail(),
+                        now = miner.now,
+                        campaigns = miner.campaigns,
                     )
                 }
                 // With the wake timer on, don't burn battery idling: stop and let the next check restart us.
@@ -224,7 +229,7 @@ class MinerService : Service() {
         systemEvents?.let { runCatching { unregisterReceiver(it) } }
         networkCallback?.let { cb -> runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) } }
         DropSpikeApp.instance.prefs.sessionActive = false
-        MinerState.update { it.copy(running = false) }
+        MinerState.update { it.copy(running = false, now = null) }
         super.onDestroy()
     }
 
@@ -239,7 +244,7 @@ class MinerService : Service() {
         )
         return NotificationCompat.Builder(this, DropSpikeApp.CHANNEL_MINER)
             .setSmallIcon(R.drawable.ic_stat_drop)
-            .setContentTitle("DropSpike is mining")
+            .setContentTitle("PocketDrop is mining")
             .setContentText(text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
