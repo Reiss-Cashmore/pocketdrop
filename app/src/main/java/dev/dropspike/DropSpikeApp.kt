@@ -7,6 +7,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import dev.dropspike.data.Prefs
 import dev.dropspike.data.UptimeLog
+import dev.dropspike.service.WakeWorker
 import dev.dropspike.twitch.TwitchApi
 
 class DropSpikeApp : Application() {
@@ -26,6 +27,7 @@ class DropSpikeApp : Application() {
         // Use the WebView's own user agent for API calls so requests look like they come
         // from the same browser that minted the integrity token.
         api = TwitchApi(prefs, userAgent = WebSettings.getDefaultUserAgent(this))
+        WakeWorker.schedule(this)
 
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(

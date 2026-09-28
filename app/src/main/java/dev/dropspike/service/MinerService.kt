@@ -97,6 +97,12 @@ class MinerService : Service() {
                     MinuteStatus.Failed to "Miner error: ${e.message}"
                 }
                 UptimeLog.record(status, note)
+                // With the wake timer on, don't burn battery idling: stop and let the next check restart us.
+                if (prefs.wakeIntervalMin > 0 && miner.idleTicks >= IDLE_STOP_TICKS) {
+                    DiagLog.i("service: nothing to mine for $IDLE_STOP_TICKS min, stopping until the next wake check")
+                    stopSelf()
+                    break
+                }
                 if (status != MinuteStatus.Credited && status != MinuteStatus.Sent) DiagLog.i("miner: $status · $note")
 
                 MinerState.update {
@@ -149,6 +155,7 @@ class MinerService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "dev.dropspike.STOP"
         private const val TICK_MS = 60_000L
+        private const val IDLE_STOP_TICKS = 10
 
         fun start(context: Context) =
             ContextCompat.startForegroundService(context, Intent(context, MinerService::class.java))

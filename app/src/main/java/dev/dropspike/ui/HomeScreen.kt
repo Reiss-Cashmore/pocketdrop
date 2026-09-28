@@ -123,6 +123,7 @@ fun HomeScreen(vm: MainViewModel) {
                 item { AccountCard(vm) }
                 item { IntegrityCard(vm) }
                 item { GateCard(vm) }
+                item { GamesCard(vm) }
                 item { BackgroundCard(vm) }
                 item { LogCard() }
             }
@@ -132,7 +133,7 @@ fun HomeScreen(vm: MainViewModel) {
 }
 
 @Composable
-private fun Section(step: Int, title: String, content: @Composable () -> Unit) {
+internal fun Section(step: Int, title: String, content: @Composable () -> Unit) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -153,7 +154,7 @@ private fun Section(step: Int, title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun StatusLine(ok: Boolean?, text: String) {
+internal fun StatusLine(ok: Boolean?, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         when (ok) {
             true -> Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF2E9D5B), modifier = Modifier.size(18.dp))
@@ -165,12 +166,12 @@ private fun StatusLine(ok: Boolean?, text: String) {
 }
 
 @Composable
-private fun Hint(text: String) =
+internal fun Hint(text: String) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Buttons(content: @Composable () -> Unit) =
+internal fun Buttons(content: @Composable () -> Unit) =
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
 
 // ---- 1. Account ---------------------------------------------------------------------------
@@ -417,7 +418,7 @@ private fun BackgroundCard(vm: MainViewModel) {
 
     val uptime by UptimeLog.entries.collectAsStateWithLifecycle()
 
-    Section(4, "Mining") {
+    Section(5, "Mining") {
         Hint("Picks your unfinished drop closest to completion, finds a live drops-enabled channel for it, and sends Twitch the same once-a-minute \"minute-watched\" heartbeat as DropForge (no video). Green means Twitch's progress actually went up; amber means the heartbeat was accepted but progress hasn't moved yet.")
         StatusLine(notificationsOk, if (notificationsOk) "Notifications allowed" else "Notifications blocked")
         StatusLine(batteryOk, if (batteryOk) "Battery: unrestricted" else "Battery: optimised (Android may pause the session)")
@@ -468,7 +469,7 @@ private fun LogCard() {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
-    Section(5, "Diagnostics") {
+    Section(6, "Diagnostics") {
         Hint("Contains no tokens. Copy and share this when reporting results.")
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerHighest,

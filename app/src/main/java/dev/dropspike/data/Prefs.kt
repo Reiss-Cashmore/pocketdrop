@@ -2,6 +2,9 @@ package dev.dropspike.data
 
 import android.content.Context
 import androidx.core.content.edit
+import dev.dropspike.twitch.WatchedGame
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
 /**
@@ -62,6 +65,34 @@ class Prefs(context: Context) {
         get() = sp.getLong("last_tick", 0L)
         set(v) = sp.edit { putLong("last_tick", v) }
 
+    /** Games to prefer when mining, in the user's order. */
+    var watchedGames: List<WatchedGame>
+        get() = decodeGames(sp.getString("watched_games", null))
+        set(v) = sp.edit { putString("watched_games", encodeGames(v)) }
+
+    /** Last known games with active campaigns, for the picker. */
+    var gameCatalog: List<WatchedGame>
+        get() = decodeGames(sp.getString("game_catalog", null))
+        set(v) = sp.edit { putString("game_catalog", encodeGames(v)) }
+
+    var gameCatalogAt: Long
+        get() = sp.getLong("game_catalog_at", 0L)
+        set(v) = sp.edit { putLong("game_catalog_at", v) }
+
+    /** Only mine watched games (otherwise watched first, then anything in progress). */
+    var onlyWatched: Boolean
+        get() = sp.getBoolean("only_watched", false)
+        set(v) = sp.edit { putBoolean("only_watched", v) }
+
+    /** Background check interval in minutes; 0 = off. */
+    var wakeIntervalMin: Int
+        get() = sp.getInt("wake_interval", 0)
+        set(v) = sp.edit { putInt("wake_interval", v) }
+
+    var lastWakeCheck: String
+        get() = sp.getString("last_wake_check", null).orEmpty()
+        set(v) = sp.edit { putString("last_wake_check", v) }
+
     fun signOut() {
         sp.edit {
             remove("auth_token"); remove("client_id"); remove("login"); remove("user_id")
@@ -72,6 +103,19 @@ class Prefs(context: Context) {
     fun clearIntegrity() {
         sp.edit { remove("integrity_token"); remove("integrity_expiry") }
     }
+
+    private fun encodeGames(games: List<WatchedGame>) = JSONArray().apply {
+        games.forEach { put(JSONObject().put("id", it.id).put("name", it.name).put("slug", it.slug).put("campaigns", it.campaigns)) }
+    }.toString()
+
+    private fun decodeGames(raw: String?): List<WatchedGame> = runCatching {
+        JSONArray(raw ?: return emptyList()).let { a ->
+            (0 until a.length()).map { i ->
+                val j = a.getJSONObject(i)
+                WatchedGame(j.optString("id"), j.optString("name"), j.optString("slug"), j.optInt("campaigns"))
+            }
+        }
+    }.getOrDefault(emptyList())
 
     companion object {
         const val WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"

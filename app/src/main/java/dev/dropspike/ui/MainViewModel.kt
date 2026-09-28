@@ -8,17 +8,20 @@ import androidx.lifecycle.viewModelScope
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
 import dev.dropspike.data.Prefs
+import dev.dropspike.service.WakeWorker
 import dev.dropspike.twitch.ApiOrigin
 import dev.dropspike.twitch.BrowserProbe
 import dev.dropspike.twitch.Campaign
 import dev.dropspike.twitch.DashboardResult
 import dev.dropspike.twitch.DeviceClient
 import dev.dropspike.twitch.DeviceCode
+import dev.dropspike.twitch.GameCatalog
 import dev.dropspike.twitch.IntegrityMinter
 import dev.dropspike.twitch.IntegrityToken
 import dev.dropspike.twitch.MintPage
 import dev.dropspike.twitch.MintSurface
 import dev.dropspike.twitch.Queries
+import dev.dropspike.twitch.WatchedGame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,6 +50,17 @@ data class IntegrityState(
     val error: String? = null,
 )
 
+data class GamesState(
+    val watched: List<WatchedGame> = emptyList(),
+    val catalog: List<WatchedGame> = emptyList(),
+    val catalogAt: Long = 0,
+    val busy: Boolean = false,
+    val error: String? = null,
+    val onlyWatched: Boolean = false,
+    val wakeIntervalMin: Int = 0,
+    val lastWakeCheck: String = "",
+)
+
 /** One request in the gate test. [ok]: true = pass, false = fail, null = informational. */
 data class GateResult(val label: String, val ok: Boolean?, val text: String)
 
@@ -70,6 +84,59 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ),
     )
     val integrity: StateFlow<IntegrityState> = _integrity
+
+    private val _games = MutableStateFlow(loadGames())
+    val games: StateFlow<GamesState> = _games
+
+    private fun loadGames(busy: Boolean = false, error: String? = null) = GamesState(
+        watched = prefs.watchedGames,
+        catalog = prefs.gameCatalog,
+        catalogAt = prefs.gameCatalogAt,
+        busy = busy,
+        error = error,
+        onlyWatched = prefs.onlyWatched,
+        wakeIntervalMin = prefs.wakeIntervalMin,
+        lastWakeCheck = prefs.lastWakeCheck,
+    )
+
+    /** Re-read settings the background check may have changed (e.g. its last result). */
+    fun reloadGames() {
+        _games.value = loadGames(busy = _games.value.busy, error = _games.value.error)
+    }
+
+    fun refreshGameCatalog() = viewModelScope.launch {
+        _games.value = loadGames(busy = true)
+        val result = GameCatalog.refresh(getApplication(), prefs, api)
+        _games.value = loadGames(error = result.exceptionOrNull()?.message)
+    }
+
+    fun toggleWatched(game: WatchedGame) {
+        val current = prefs.watchedGames
+        prefs.watchedGames = if (current.any { it.slug == game.slug }) current.filterNot { it.slug == game.slug } else current + game
+        reloadGames()
+    }
+
+    fun moveWatchedUp(game: WatchedGame) {
+        val list = prefs.watchedGames.toMutableList()
+        val i = list.indexOfFirst { it.slug == game.slug }
+        if (i > 0) {
+            list.add(i - 1, list.removeAt(i))
+            prefs.watchedGames = list
+            reloadGames()
+        }
+    }
+
+    fun setOnlyWatched(on: Boolean) {
+        prefs.onlyWatched = on
+        reloadGames()
+    }
+
+    fun setWakeInterval(minutes: Int) {
+        prefs.wakeIntervalMin = minutes
+        WakeWorker.schedule(getApplication())
+        DiagLog.i("wake: check ${if (minutes == 0) "off" else "every $minutes min"}")
+        reloadGames()
+    }
 
     private var mintHost: CompletableDeferred<WebView>? = null
 

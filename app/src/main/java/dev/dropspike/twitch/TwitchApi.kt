@@ -16,7 +16,16 @@ import java.util.concurrent.TimeUnit
 
 data class TokenInfo(val login: String, val userId: String, val clientId: String, val expiresInSec: Long)
 
-data class Campaign(val id: String, val name: String, val game: String, val status: String, val linked: Boolean?)
+data class Campaign(
+    val id: String,
+    val name: String,
+    val game: String,
+    val status: String,
+    val linked: Boolean?,
+    val gameId: String = "",
+    val gameSlug: String? = null,
+    val endsAtMs: Long = Long.MAX_VALUE,
+)
 
 /** `campaigns == null` means Twitch returned `dropCampaigns: null`, i.e. the integrity gate. */
 data class DashboardResult(val campaigns: List<Campaign>?, val errors: List<String>)
@@ -70,6 +79,12 @@ data class InvCampaign(
     val allowedLogins: List<String>,
     val drops: List<InvDrop>,
 )
+
+/** A game the user asked to mine; also the entries of the game picker. */
+data class WatchedGame(val id: String, val name: String, val slug: String, val campaigns: Int = 0) {
+    fun matches(gameId: String, gameName: String) =
+        (id.isNotEmpty() && id == gameId) || name.equals(gameName, ignoreCase = true)
+}
 
 data class LiveStream(
     val channelId: String,
@@ -170,6 +185,9 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 id = c.optString("id"),
                 name = c.optString("name"),
                 game = c.optJSONObject("game")?.let { it.optString("displayName").ifEmpty { it.optString("name") } }.orEmpty(),
+                gameId = c.optJSONObject("game")?.optString("id").orEmpty(),
+                gameSlug = c.optJSONObject("game")?.optString("slug")?.ifEmpty { null },
+                endsAtMs = parseTime(c.optString("endAt")),
                 status = c.optString("status"),
                 linked = c.optJSONObject("self")?.takeIf { it.has("isAccountConnected") }?.optBoolean("isAccountConnected"),
             )
@@ -220,8 +238,11 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     }
 
     /** Live, drops-enabled streams for a game (DropForge get_live_streams). */
-    suspend fun liveStreams(game: InvCampaign, limit: Int = 20): List<LiveStream> {
-        val slug = game.gameSlug ?: slugOf(game.gameName)
+    suspend fun liveStreams(game: InvCampaign, limit: Int = 20): List<LiveStream> =
+        liveStreams(WatchedGame(game.gameId, game.gameName, game.gameSlug ?: slugOf(game.gameName)), limit)
+
+    suspend fun liveStreams(game: WatchedGame, limit: Int = 20): List<LiveStream> {
+        val slug = game.slug
         val root = gql(Queries.gameDirectory(slug, limit), useIntegrity = false)
         val edges = root.optJSONObject("data")?.optJSONObject("game")?.optJSONObject("streams")?.optJSONArray("edges")
             ?: return emptyList()
@@ -233,8 +254,8 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 channelId = caster.optString("id"),
                 login = caster.optString("login"),
                 broadcastId = node.optString("id"),
-                gameId = g?.optString("id") ?: game.gameId,
-                gameName = g?.optString("displayName")?.ifEmpty { g.optString("name") } ?: game.gameName,
+                gameId = g?.optString("id") ?: game.id,
+                gameName = g?.optString("displayName")?.ifEmpty { g.optString("name") } ?: game.name,
                 viewers = node.optInt("viewersCount"),
             )
         }
