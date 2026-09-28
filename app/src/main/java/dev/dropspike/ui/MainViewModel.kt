@@ -9,12 +9,16 @@ import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
 import dev.dropspike.twitch.BrowserProbe
 import dev.dropspike.twitch.DashboardResult
+import dev.dropspike.twitch.DeviceClient
+import dev.dropspike.twitch.DeviceCode
 import dev.dropspike.twitch.IntegrityMinter
 import dev.dropspike.twitch.IntegrityToken
 import dev.dropspike.twitch.MintPage
 import dev.dropspike.twitch.MintSurface
 import dev.dropspike.twitch.Queries
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -22,6 +26,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class AccountState(val login: String? = null, val clientId: String? = null, val busy: Boolean = false, val error: String? = null)
+
+/** Device-code sign-in in progress: show [code] to the user while polling Twitch. */
+data class DeviceLoginState(val code: DeviceCode? = null, val busy: Boolean = false, val error: String? = null)
 
 data class IntegrityState(
     val page: MintPage = MintPage.Light,
@@ -58,6 +65,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     )
     val integrity: StateFlow<IntegrityState> = _integrity
 
+    private val _deviceLogin = MutableStateFlow(DeviceLoginState())
+    val deviceLogin: StateFlow<DeviceLoginState> = _deviceLogin
+    private var deviceLoginJob: Job? = null
+
     private val _gate = MutableStateFlow(GateState())
     val gate: StateFlow<GateState> = _gate
 
@@ -78,6 +89,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 prefs.authToken = null
                 _account.value = AccountState(error = e.message)
             }
+    }
+
+    /** Twitch's device-code flow: no embedded login page; the code is entered in any browser. */
+    fun startDeviceLogin(client: DeviceClient) {
+        deviceLoginJob?.cancel()
+        _deviceLogin.value = DeviceLoginState(busy = true)
+        deviceLoginJob = viewModelScope.launch {
+            val code = runCatching { api.startDeviceLogin(client) }.getOrElse { e ->
+                DiagLog.i("device login (${client.label}): ${e.message}")
+                _deviceLogin.value = DeviceLoginState(error = e.message)
+                return@launch
+            }
+            DiagLog.i("device login (${client.label}): code issued, waiting for activation")
+            _deviceLogin.value = DeviceLoginState(code = code, busy = true)
+            while (System.currentTimeMillis() < code.expiresAtMs) {
+                delay(code.intervalSec * 1000)
+                val token = runCatching { api.pollDeviceLogin(code) }.getOrNull() ?: continue
+                DiagLog.i("device login (${client.label}): activated")
+                _deviceLogin.value = DeviceLoginState()
+                prefs.authToken = token
+                onTokenStored()
+                return@launch
+            }
+            _deviceLogin.value = DeviceLoginState(error = "Code expired, try again")
+        }
+    }
+
+    fun cancelDeviceLogin() {
+        deviceLoginJob?.cancel()
+        _deviceLogin.value = DeviceLoginState()
     }
 
     fun pasteToken(token: String) {

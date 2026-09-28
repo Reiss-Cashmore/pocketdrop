@@ -84,6 +84,7 @@ import dev.dropspike.data.DiagLog
 import dev.dropspike.service.MinerService
 import dev.dropspike.service.MinerState
 import dev.dropspike.twitch.DashboardResult
+import dev.dropspike.twitch.DeviceClient
 import dev.dropspike.twitch.MintPage
 import dev.dropspike.twitch.MintSurface
 import java.text.DateFormat
@@ -176,6 +177,7 @@ private fun AccountCard(vm: MainViewModel) {
     val state by vm.account.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var pasting by remember { mutableStateOf(false) }
+    var codeLogin by remember { mutableStateOf(false) }
     val login = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (it.resultCode == Activity.RESULT_OK) vm.onTokenStored()
     }
@@ -192,13 +194,18 @@ private fun AccountCard(vm: MainViewModel) {
         Buttons {
             if (state.login == null) {
                 Button(onClick = { login.launch(Intent(context, LoginActivity::class.java)) }) { Text("Sign in") }
+                OutlinedButton(onClick = { codeLogin = true }) { Text("Sign in with code") }
                 OutlinedButton(onClick = { pasting = true }) { Text("Paste token") }
             } else {
                 OutlinedButton(onClick = vm::signOut) { Text("Sign out") }
             }
         }
-        if (state.login == null) Hint("Sign-in uses Twitch's own page; the app only keeps the session cookie. \"Paste token\" takes the auth-token cookie from a desktop browser if the in-app page is blocked.")
+        if (state.login == null) Hint("\"Sign in\" shows Twitch's own page in the app. \"Sign in with code\" gives you a code to enter at twitch.tv/activate in any browser. \"Paste token\" takes the auth-token cookie from a desktop browser.")
     }
+
+    if (codeLogin) DeviceLoginDialog(vm, onDismiss = { codeLogin = false; vm.cancelDeviceLogin() })
+    // Close the dialog once the device login has turned into a signed-in account.
+    LaunchedEffect(state.login) { if (state.login != null) codeLogin = false }
 
     if (pasting) {
         var text by remember { mutableStateOf("") }
@@ -214,6 +221,59 @@ private fun AccountCard(vm: MainViewModel) {
             dismissButton = { TextButton(onClick = { pasting = false }) { Text("Cancel") } },
         )
     }
+}
+
+@Composable
+private fun DeviceLoginDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+    val state by vm.deviceLogin.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val code = state.code
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sign in with code") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when {
+                    code != null -> {
+                        Text("Enter this code at twitch.tv/activate, in any browser or on another device:")
+                        Text(
+                            code.userCode,
+                            style = MaterialTheme.typography.displaySmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text("Waiting for Twitch… (${code.client.label} client)", modifier = Modifier.padding(start = 8.dp))
+                        }
+                        Buttons {
+                            FilledTonalButton(onClick = {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(code.verificationUri)))
+                            }) { Text("Open activate page") }
+                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(code.userCode)) }) { Text("Copy code") }
+                        }
+                    }
+                    state.busy -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text("Requesting a code…", modifier = Modifier.padding(start = 8.dp))
+                    }
+                    else -> {
+                        state.error?.let { StatusLine(false, it) }
+                        Hint("Choose which Twitch client to sign in as. Mobile web is a web client, so it may also work with the integrity token; Smart TV is the fallback.")
+                        Buttons {
+                            DeviceClient.entries.forEach { c ->
+                                FilledTonalButton(onClick = { vm.startDeviceLogin(c) }) { Text(c.label) }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 // ---- 2. Integrity -------------------------------------------------------------------------

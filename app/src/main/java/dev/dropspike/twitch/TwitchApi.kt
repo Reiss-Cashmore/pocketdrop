@@ -4,6 +4,7 @@ import dev.dropspike.data.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -19,6 +20,21 @@ data class Campaign(val id: String, val name: String, val game: String, val stat
 
 /** `campaigns == null` means Twitch returned `dropCampaigns: null`, i.e. the integrity gate. */
 data class DashboardResult(val campaigns: List<Campaign>?, val errors: List<String>)
+
+/** Clients whose device-code login Twitch still accepted on 2026-09-23 (rangermix/TwitchDropsMiner#118). */
+enum class DeviceClient(val label: String, val clientId: String) {
+    MobileWeb("Mobile web", "r8s4dac0uhzifbpu9sjdiwzctle17ff"),
+    SmartTv("Smart TV", "ue6666qo983tsx6so1t0vnawi233wa"),
+}
+
+data class DeviceCode(
+    val client: DeviceClient,
+    val deviceCode: String,
+    val userCode: String,
+    val verificationUri: String,
+    val intervalSec: Long,
+    val expiresAtMs: Long,
+)
 
 data class DropProgress(val campaign: String, val game: String, val drop: String, val minutes: Int, val required: Int, val claimed: Boolean)
 
@@ -44,6 +60,55 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 clientId = j.optString("client_id"),
                 expiresInSec = j.optLong("expires_in"),
             )
+        }
+    }
+
+    /** Step 1 of Twitch's device-code login (DropForge `_oauth_login`). No scopes are needed. */
+    suspend fun startDeviceLogin(client: DeviceClient): DeviceCode = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("https://id.twitch.tv/oauth2/device")
+            .post(FormBody.Builder().add("client_id", client.clientId).add("scopes", "").build())
+            .header("Client-Id", client.clientId)
+            .header("X-Device-Id", prefs.deviceId)
+            .header("User-Agent", userAgent)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            val j = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
+            if (resp.code != 200 || !j.has("device_code")) {
+                val reason = j.optString("message").ifEmpty { j.optString("error") }.ifEmpty { body.take(200) }
+                throw IOException("Twitch device login failed (HTTP ${resp.code}): $reason")
+            }
+            DeviceCode(
+                client = client,
+                deviceCode = j.getString("device_code"),
+                userCode = j.getString("user_code"),
+                verificationUri = j.getString("verification_uri"),
+                intervalSec = j.optLong("interval", 5),
+                expiresAtMs = System.currentTimeMillis() + j.optLong("expires_in", 1800) * 1000,
+            )
+        }
+    }
+
+    /** Step 2: one poll. Returns the access token, or null while the user hasn't entered the code. */
+    suspend fun pollDeviceLogin(code: DeviceCode): String? = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("https://id.twitch.tv/oauth2/token")
+            .post(
+                FormBody.Builder()
+                    .add("client_id", code.client.clientId)
+                    .add("device_code", code.deviceCode)
+                    .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+                    .build(),
+            )
+            .header("Client-Id", code.client.clientId)
+            .header("X-Device-Id", prefs.deviceId)
+            .header("User-Agent", userAgent)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            // Twitch answers 400 until the code has been entered.
+            if (resp.code != 200) return@withContext null
+            JSONObject(resp.body?.string().orEmpty()).getString("access_token")
         }
     }
 
