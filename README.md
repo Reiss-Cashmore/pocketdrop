@@ -1,114 +1,193 @@
-<img src="art/pocketdrop.svg" width="96" alt="PocketDrop icon">
+<div align="center">
+
+<img src="art/pocketdrop.svg" width="112" alt="PocketDrop icon: a gold drop falling into a stitched pocket">
 
 # PocketDrop
 
-Earn Twitch drops in the background on Android. No video is streamed: PocketDrop sends Twitch
-the same once-a-minute "minute-watched" heartbeat its player does, picks live drops-enabled
-channels for the games you choose, and claims finished drops automatically.
+**Earn Twitch drops in your pocket.**<br>
+PocketDrop watches for your games, earns their drops in the background and claims them for you.
+It never plays any video.
 
-- **Home:** what's being mined right now, a minute-by-minute uptime chart, and every campaign
-  in progress.
-- **Games:** your watch list (mined first, in order), a searchable box-art picker of every game
-  with an active campaign, account-link warnings, and an optional background check (30 min to
-  2 h). With **Auto mine** on (the default), mining starts by itself whenever the app wakes up
-  and a watched game is live: on each check, when you open the app, and after a reboot or an
-  update. Tapping Stop pauses auto mine for an hour.
-- **Rewards:** every drop PocketDrop claimed, plus every reward on your Twitch account.
-- **Settings:** account, background permissions, mining rules (only while charging, only on
-  Wi-Fi, an experimental two-channel mode), theme (system, light or dark), security, a full
-  shareable diagnostics report, and advanced tools.
+[![Build](https://github.com/Reiss-Cashmore/pocketdrop/actions/workflows/build.yml/badge.svg)](https://github.com/Reiss-Cashmore/pocketdrop/actions/workflows/build.yml)
+![Android 10+](https://img.shields.io/badge/Android-10%2B-6A43D1?logo=android&logoColor=white)
+![No Google Play Services](https://img.shields.io/badge/Google%20Play%20Services-not%20needed-6A43D1)
+![Kotlin + Compose](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-6A43D1?logo=kotlin&logoColor=white)
 
-It began as a spike to prove three things on Android, all now confirmed on a Pixel 10 Pro Fold
-(GrapheneOS): a WebView login yields a web-client session, an Android WebView can mint a
-Client-Integrity token Twitch accepts (unlocking the campaign list gated since 2026-09-18), and
-a foreground service keeps mining overnight with the screen off.
+</div>
 
-The design follows [DropForge](https://github.com/HimanM/DropForge) (MIT). Its
-`network/integrity.py` gets the same token by running Twitch's Kasada script in desktop
-Chrome over CDP; here an Android WebView plays that role.
+<!-- Screenshots: docs/screenshots/{home,campaign,games,rewards,settings}.png
+<p align="center">
+  <img src="docs/screenshots/home.png" width="19%" alt="Home">
+  <img src="docs/screenshots/campaign.png" width="19%" alt="Campaign details">
+  <img src="docs/screenshots/games.png" width="19%" alt="Games">
+  <img src="docs/screenshots/rewards.png" width="19%" alt="Rewards">
+  <img src="docs/screenshots/settings.png" width="19%" alt="Settings">
+</p>
+-->
+
+## Why
+
+Twitch drops reward you for watching streams, but only while a player is open. PocketDrop
+sends Twitch the same small "a minute was watched" signal its web player sends, without
+downloading any video. It can run all night on a locked phone.
+
+## Features
+
+| | |
+|---|---|
+| 🎮 **Your games first** | Pick games from a searchable box-art grid of every active campaign. They're mined in your order, even before you've started their campaign. |
+| ⚡ **Auto mine** | Starts by itself when a watched game goes live: on a background check every 30 min to 2 h, when you open the app, after a reboot and after an update. |
+| 🎁 **Claims for you** | Finished drops are claimed within a minute, and they show up on the Rewards tab with their images. |
+| 📈 **Uptime you can see** | A minute-by-minute chart of what each minute achieved (credited, sent, failed, idle) over 1 h, 6 h or 24 h. |
+| 🔍 **Campaign details** | Tap any campaign to see every drop and its reward, time left, which channels count, and a link to connect your game account when Twitch needs one. |
+| 🧠 **Smart channel choice** | Honours channel allow-lists, skips campaigns whose game account isn't linked, and leaves a channel quickly when Twitch is stuck counting something else. |
+| 🔋 **Your rules** | Mine only while charging or only on Wi‑Fi. Optionally watch two games at once (experimental). |
+| 🌗 **Looks at home** | Material 3 in a violet theme, with light, dark or system mode and optional wallpaper colours. The layout adapts to foldables and tablets. |
+| 🔒 **Private by design** | Signs in through Twitch's own page and keeps its tokens encrypted with a hardware-backed Android Keystore key. No analytics, no servers of its own. |
+| 🩺 **Honest diagnostics** | A shareable report with everything the miner did and why. It contains no tokens. |
+
+## How it works
+
+```mermaid
+flowchart LR
+    A([Wake-up<br/>check, app open,<br/>reboot]) --> B{Watched game<br/>live with drops?}
+    B -- no --> Z([Sleep until<br/>next check])
+    B -- yes --> C[Foreground service<br/>ticks every minute]
+    C --> D[Send minute-watched<br/>heartbeat]
+    D --> E[Read progress<br/>from inventory]
+    E -- drop finished --> F[Claim it]
+    E -- no credit for 10 min<br/>or stuck session --> G[Try another channel]
+    F --> C
+    G --> C
+```
+
+- **Sign-in.** An in-app WebView shows Twitch's normal login page, and PocketDrop keeps the
+  resulting web session.
+- **Unlocking the campaign list.** Since September 2026 Twitch hides the campaign list
+  behind a *Client-Integrity* token. PocketDrop gets one from an invisible WebView running
+  Twitch's own anti-bot script, and renews it on its own whenever it runs out.
+- **Mining.** A foreground service with a partial wake lock ticks once a minute. Each tick
+  sends one heartbeat per channel to Twitch's analytics endpoint, as the web player does,
+  then reads progress back from the inventory.
+- **Claiming.** Finished drops are claimed with the same request the Twitch drops page uses.
+
+The approach follows [DropForge](https://github.com/HimanM/DropForge) and
+[TwitchDropsMiner](https://github.com/DevilXD/TwitchDropsMiner). On a desktop they drive
+Chrome; here an Android WebView plays that role.
 
 ## Install
 
-### From CI (no Android tooling needed)
-1. Push this folder to a GitHub repo.
-2. **Actions → Build APK → latest run → Artifacts → PocketDrop-apk.** Unzip it and install
-   the APK on the phone.
-3. For updates straight to the phone, push a tag (`git tag v0.1.0 && git push --tags`) and
-   point [Obtainium](https://github.com/ImranR98/Obtainium) at the repo's releases.
+1. Open **[Actions → Build APK](https://github.com/Reiss-Cashmore/pocketdrop/actions/workflows/build.yml)**,
+   pick the newest green run, and download **PocketDrop-apk** under *Artifacts*.
+2. Unzip it and open the APK on your phone. Allow installing from your browser or file
+   manager if Android asks.
 
-Builds are signed with your private key when the repo has the signing secrets (below),
-otherwise with the public throwaway key in `keystore/`. Settings → Security shows which.
+Updates install over the top as long as every build is signed with the same key (see
+[Signing](#signing)).
+
+### First run
+1. **Sign in with Twitch.** The page is Twitch's own, and PocketDrop never sees your password.
+2. **Home → Finish setting up.** Allow notifications and background use. Without them
+   Android pauses mining when the screen is off.
+3. **Games → Add.** Choose your games and put the most important one on top.
+4. Tap **Start mining**, or just leave it: Auto mine starts on its own when a watched game
+   goes live.
+
+> **GrapheneOS:** works as is. Nothing needs Google Play Services, and Vanadium's WebView
+> handles sign-in and the integrity token.
+
+## Settings at a glance
+
+| Where | Setting | Default |
+|---|---|---|
+| Games | Only mine these games | Off: in-progress drops are mined after your list |
+| Games | Auto mine | **On** |
+| Games | Background check | 30 min when Auto mine is turned on (30 min, 1 h, 2 h or off) |
+| Settings → Mining | Only while charging | Off |
+| Settings → Mining | Only on Wi‑Fi | Off |
+| Settings → Mining | Watch two channels (experimental) | Off |
+| Settings → Appearance | Theme · wallpaper colours | System · off |
+
+## Battery and data
+
+PocketDrop streams no video. Each minute it makes a few small web requests: the heartbeat,
+a progress read, and now and then a channel lookup. The partial wake lock keeps only the
+CPU awake. The screen stays off, and the service lets the phone sleep between ticks.
+
+When nothing is live and a background check is on, mining stops after 10 idle minutes and
+the next check starts it again.
+
+## Privacy and security
+
+- **Where your tokens go.** Your Twitch session and integrity tokens are encrypted with an
+  AES‑256 key held in the Android Keystore, and they never leave the phone except in requests
+  to Twitch.
+- **No extra services.** There are no analytics, no crash reporting and no servers of its
+  own. It talks only to Twitch and Twitch's image CDN.
+- **What the report contains.** The diagnostics report says whether each token exists and
+  when it expires, never the token itself.
+- **Build hardening.** WebView remote debugging is off in release builds, and app backups
+  are disabled.
+- **Proof of origin.** Settings → Security shows whether your build is signed with your own
+  private key.
+
+## Troubleshooting
+
+| Symptom | Try |
+|---|---|
+| Uptime chart shows red "missed" minutes | Allow background use. On GrapheneOS: Settings → Apps → PocketDrop → Battery → Unrestricted. |
+| A watched game never starts | Open its campaign. **Not linked** means Twitch needs your game account connected first. |
+| "Sent, not yet credited" for a long time | Normal for a few minutes, because Twitch credits in bursts. After 10 minutes PocketDrop moves to another channel. |
+| Anything else | Settings → Diagnostics → **Share full report**, and attach it to an issue. |
+
+## Building
+
+The [workflow](.github/workflows/build.yml) builds a release APK on every push to `main`.
+To build locally, open the project in Android Studio or run `./gradlew assembleRelease`.
+
+**Stack:** Kotlin 2.1, Jetpack Compose with Material 3 (adaptive navigation), WorkManager,
+OkHttp, and Coil. Minimum Android 10, targeting Android 15.
 
 ### Signing
-The throwaway key is public, so anyone could sign an "update" that installs over it. To use
-your own key:
 
-1. Create one (any machine with Java):
+Until you add a private key, builds are signed with the public throwaway key in `keystore/`.
+Anyone could sign an "update" with that key. To use your own:
+
+1. Create a key on any machine with Java:
    `keytool -genkeypair -v -keystore pocketdrop.jks -alias pocketdrop -keyalg RSA -keysize 4096 -validity 10000`
-2. Base64 it: `base64 -w0 pocketdrop.jks > pocketdrop.jks.b64` (macOS: `base64 -i pocketdrop.jks`).
-3. In the repo: **Settings → Secrets and variables → Actions**, add
-   `SIGNING_KEYSTORE_B64` (the base64 text), `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS`
-   (`pocketdrop`) and `SIGNING_KEY_PASSWORD` (same as the store password unless you chose another).
-4. Re-run the build. Android refuses an update signed with a different key, so uninstall
-   the old PocketDrop once (you'll need to sign in to Twitch again), then install the new APK.
-   Keep `pocketdrop.jks` and its password somewhere safe: every future update needs them.
+2. Base64-encode it: `base64 -w0 pocketdrop.jks > pocketdrop.jks.b64` (macOS: `base64 -i pocketdrop.jks`).
+3. In the repo, go to **Settings → Secrets and variables → Actions** and add:
+   - `SIGNING_KEYSTORE_B64`: the base64 text
+   - `SIGNING_STORE_PASSWORD`
+   - `SIGNING_KEY_ALIAS`: `pocketdrop`
+   - `SIGNING_KEY_PASSWORD`: the same as the store password unless you chose another
+4. Re-run the build. Android refuses an update signed with a different key, so uninstall the
+   old PocketDrop once (you'll need to sign in to Twitch again) and then install the new APK.
+   Keep `pocketdrop.jks` and its password safe, because every future update needs them.
 
-### Locally
-Open in Android Studio (or run `./gradlew assembleRelease` with the Android SDK installed).
+### Project layout
 
-## Running the spike
-
-Work top to bottom in the app, then use **Copy report** in Diagnostics and share it.
-The report contains no tokens.
-
-| Step | What a pass looks like |
-|---|---|
-| 1. Sign in | "Signed in as …". The client ID is shown too; `kimne78…` is the web client. |
-| 2. Mint token | "Token valid until …", `is_bad_bot = false`, and an in-WebView campaign check that shows a count, not `null`. |
-| 3. Gate test | "Without token: dropCampaigns: null" and "With token: N campaigns". |
-| 4. Background | Start, lock the phone for an hour or more, come back. The tick count should roughly equal minutes elapsed, with the largest gap near 60s. |
-
-Try both mint options: **Light** (Streamlink's blank page) vs **Full site** (DropForge's
-approach), and **On screen** vs **Off screen**. Off screen matters most, because a
-background miner will have to renew tokens with no UI.
-
-### Reading the results
-- **In-WebView check passes, gate test "with token" fails:** Twitch accepts the token but
-  rejects the app's own HTTP client (OkHttp's fingerprint differs from Chromium's).
-  Fix: route gated GQL calls through the WebView's `fetch`.
-- **`is_bad_bot = true` or the in-WebView check fails:** Twitch distrusts the WebView.
-  Try Full site / On screen; if it still fails, fall back to the public campaign catalogue
-  (as DropForge does) for discovery.
-- **Big tick gaps:** tap "Allow background". On GrapheneOS, also check
-  Settings → Apps → DropSpike → Battery → Unrestricted.
-
-## GrapheneOS notes
-- No Google Play Services are used anywhere.
-- The WebView is Vanadium's. Its hardening (e.g. JIT restrictions) may slow Kasada's
-  script; the 60s timeout allows for this. If minting fails only on GrapheneOS, try
-  another device before concluding the approach is dead.
-- Notification permission is requested when you start the background session.
-
-## Layout
 ```
 app/src/main/java/dev/dropspike/
-  twitch/IntegrityMinter.kt   Kasada + /integrity in a WebView (port of DropForge integrity.py)
-  twitch/TwitchApi.kt         validate, ViewerDropsDashboard, Inventory (persisted queries)
-  service/MinerService.kt     foreground service, 60s tick, inventory every 5 ticks
-  ui/                         Compose UI, login WebView, view model
-  data/                       prefs, in-app diagnostics log
+  twitch/    TwitchApi (GraphQL, heartbeats, claims), IntegrityMinter (Kasada in a WebView),
+             GameCatalog
+  service/   Miner (channel choice, credit checks), MinerService (foreground service),
+             WakeWorker + AutoMine (background checks, reboot/update)
+  data/      Prefs, SecureStore (Keystore), UptimeLog, ClaimLog, DiagLog, ReportBuilder
+  ui/        Compose screens: Home, Games, Rewards, Settings, the campaign sheet, onboarding,
+             and Motion (shared animation and haptics)
+art/         pocketdrop.svg and the script that generates the app icons from it
+docs/        spike-notes.md: how the first build proved the approach
 ```
 
-## After the spike: porting DropForge
-If steps 2 and 3 pass, port these next, in this order:
-1. `models/channel.py`: channel selection and the watch heartbeat (`send_watch`, a
-   minute-watched POST to the channel's spade URL; no video is downloaded).
-2. `models/inventory.py` and `network/twitch.py`: campaign/drop models, progress, claiming
-   (`DropsPage_ClaimDropRewards`, which is integrity-gated).
-3. `network/websocket.py`: PubSub for live progress and claim events.
-4. `web/catalog.py`: ttvdrops catalogue fallback for discovery.
-
 ## Credits
-Integrity flow and GraphQL operations derived from
-[DropForge](https://github.com/HimanM/DropForge) (MIT, © 2026 HimanM, © 2024 DevilXD) and
-[Streamlink](https://github.com/streamlink/streamlink) (BSD-2-Clause).
+
+- **Integrity flow and GraphQL operations:** derived from
+  [DropForge](https://github.com/HimanM/DropForge) (MIT, © 2026 HimanM, © 2024 DevilXD) and
+  [Streamlink](https://github.com/streamlink/streamlink) (BSD‑2‑Clause).
+- **Icons:** Material Icons (Apache 2.0).
+
+## Disclaimer
+
+PocketDrop is not affiliated with or endorsed by Twitch. Automating drops may break Twitch's
+terms of service, so use it at your own risk.
