@@ -58,6 +58,38 @@ jobs:
             echo "::error::${line}"
           done
 
+      # Known-vulnerability scan of every resolved library (direct and transitive) against OSV.
+      - name: Resolve dependency tree
+        run: ./gradlew :app:dependencies --write-locks --quiet > /dev/null
+
+      - name: Scan dependencies (OSV)
+        uses: google/osv-scanner-action/osv-scanner-action@v2.6.0
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --format=json
+            --output=osv.json
+            --lockfile=app/gradle.lockfile
+
+      - name: Report vulnerabilities
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          if not os.path.exists("osv.json"):
+              print("::warning::Vulnerability scan produced no report"); raise SystemExit
+          found = []
+          for r in json.load(open("osv.json")).get("results", []):
+              for p in r.get("packages", []):
+                  pkg = p["package"]
+                  for v in p.get("vulnerabilities", []):
+                      sev = (v.get("database_specific") or {}).get("severity", "?")
+                      found.append(f"{pkg['name']}@{pkg['version']}: {v['id']} ({sev}) {v.get('summary', '')}")
+          for f in found:
+              print(f"::error::Vulnerable dependency {f}")
+          print(f"::notice::OSV scan: {len(found)} known vulnerabilities in the resolved dependency tree")
+          PY
+
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk PocketDrop-${{ github.run_number }}.apk
 

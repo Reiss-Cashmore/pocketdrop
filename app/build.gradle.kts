@@ -63,6 +63,11 @@ android {
     }
 }
 
+// Lets CI write app/gradle.lockfile (the full resolved tree) for the vulnerability scan.
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
