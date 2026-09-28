@@ -78,16 +78,28 @@ jobs:
           import json, os
           if not os.path.exists("osv.json"):
               print("::warning::Vulnerability scan produced no report"); raise SystemExit
-          found = []
+          # Which Gradle configurations pull each library in (from the lockfile).
+          configs = {}
+          for line in open("app/gradle.lockfile"):
+              if "=" in line and not line.startswith("#"):
+                  coord, confs = line.strip().split("=", 1)
+                  configs[coord] = confs.split(",")
+          in_apk = tooling = 0
           for r in json.load(open("osv.json")).get("results", []):
               for p in r.get("packages", []):
                   pkg = p["package"]
+                  confs = configs.get(f"{pkg['name']}:{pkg['version']}", [])
+                  shipped = [c for c in confs if c.startswith("release") and "RuntimeClasspath" in c]
                   for v in p.get("vulnerabilities", []):
                       sev = (v.get("database_specific") or {}).get("severity", "?")
-                      found.append(f"{pkg['name']}@{pkg['version']}: {v['id']} ({sev}) {v.get('summary', '')}")
-          for f in found:
-              print(f"::error::Vulnerable dependency {f}")
-          print(f"::notice::OSV scan: {len(found)} known vulnerabilities in the resolved dependency tree")
+                      text = f"{pkg['name']}@{pkg['version']}: {v['id']} ({sev}) {v.get('summary', '')}"
+                      if shipped:
+                          in_apk += 1
+                          print(f"::error::In the APK: {text}")
+                      else:
+                          tooling += 1
+                          print(f"::warning::Build tooling only ({', '.join(confs[:3])}): {text}")
+          print(f"::notice::OSV scan: {in_apk} known vulnerabilities in the APK, {tooling} in build-time tooling")
           PY
 
       - name: Rename APK
