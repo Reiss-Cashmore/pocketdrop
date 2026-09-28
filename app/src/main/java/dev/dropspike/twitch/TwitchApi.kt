@@ -85,6 +85,10 @@ data class InvCampaign(
     /** Non-empty when only these channels count towards the campaign. */
     val allowedLogins: List<String>,
     val drops: List<InvDrop>,
+    /** False when the campaign needs a linked game account that isn't linked yet. */
+    val accountConnected: Boolean = true,
+    val linkUrl: String? = null,
+    val startsAtMs: Long = 0,
 )
 
 /** A game the user asked to mine; also the entries of the game picker. */
@@ -299,6 +303,9 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 gameName = game.optString("displayName").ifEmpty { game.optString("name") },
                 gameSlug = game.optString("slug").ifEmpty { null },
                 endsAtMs = parseTime(c.optString("endAt")),
+                startsAtMs = parseTime(c.optString("startAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
+                accountConnected = c.optJSONObject("self")?.optBoolean("isAccountConnected", true) ?: true,
+                linkUrl = c.optString("accountLinkURL").takeIf { it.startsWith("http") },
                 allowedLogins = if (allowEnabled) {
                     (allow?.optJSONArray("channels") ?: JSONArray()).objects().map { it.optString("name") }.filter { it.isNotEmpty() }
                 } else emptyList(),

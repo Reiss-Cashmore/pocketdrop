@@ -1,5 +1,8 @@
 package dev.dropspike.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +72,7 @@ private const val MINUTE = 60_000L
 @Composable
 fun UptimeChart(entries: List<MinuteEntry>, running: Boolean) {
     var window by remember { mutableStateOf(Window.Hour) }
+    val haptics = rememberHaptics()
     var selected by remember { mutableStateOf<Int?>(null) }
     // Re-evaluate "now" every 30s so missed minutes appear even when no ticks arrive.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -79,6 +83,12 @@ fun UptimeChart(entries: List<MinuteEntry>, running: Boolean) {
         }
     }
     val buckets = remember(entries, window, now, running) { buildBuckets(entries, window, now, running) }
+    // Bars grow up from the baseline, left to right, whenever the chart appears or the window changes.
+    val reveal = remember { Animatable(0f) }
+    LaunchedEffect(window) {
+        reveal.snapTo(0f)
+        reveal.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
+    }
     val totals = remember(buckets) {
         Slot.entries.associateWith { s -> buckets.sumOf { it.counts[s] ?: 0 } }
     }
@@ -96,7 +106,7 @@ fun UptimeChart(entries: List<MinuteEntry>, running: Boolean) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Window.entries.forEach { w ->
-                FilterChip(selected = window == w, onClick = { window = w; selected = null }, label = { Text(w.label) })
+                FilterChip(selected = window == w, onClick = { haptics.tick(); window = w; selected = null }, label = { Text(w.label) })
             }
         }
 
@@ -111,6 +121,7 @@ fun UptimeChart(entries: List<MinuteEntry>, running: Boolean) {
                     detectTapGestures { pos ->
                         val i = (pos.x / size.width * buckets.size).toInt().coerceIn(0, buckets.lastIndex)
                         selected = if (selected == i) null else i
+                        haptics.tick()
                     }
                 },
         ) {
@@ -120,7 +131,9 @@ fun UptimeChart(entries: List<MinuteEntry>, running: Boolean) {
             drawLine(baseline, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), strokeWidth = 1f)
             buckets.forEachIndexed { i, b ->
                 val slot = b.slot ?: return@forEachIndexed
-                val h = (size.height - 2.dp.toPx()) * slot.height
+                val grow = ((reveal.value - i.toFloat() / buckets.size * 0.4f) / 0.6f).coerceIn(0f, 1f)
+                val h = (size.height - 2.dp.toPx()) * slot.height * grow
+                if (h <= 0f) return@forEachIndexed
                 val x = i * (barW + gap)
                 drawRoundRect(slot.color, Offset(x, size.height - h), Size(barW, h), radius)
                 if (i == selected) {

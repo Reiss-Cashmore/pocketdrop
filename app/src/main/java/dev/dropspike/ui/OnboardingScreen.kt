@@ -4,7 +4,18 @@ import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,18 +87,34 @@ fun OnboardingScreen(vm: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             Spacer(Modifier.height(24.dp))
-            AppLogo(112.dp)
-            Text("PocketDrop", style = MaterialTheme.typography.displaySmall)
+            // The logo drops in with a little bounce, then floats gently.
+            val drop = remember { Animatable(0f) }
+            LaunchedEffect(Unit) { drop.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 180f)) }
+            val float by rememberInfiniteTransition(label = "float").animateFloat(
+                initialValue = -4f,
+                targetValue = 4f,
+                animationSpec = infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                label = "floatY",
+            )
+            AppLogo(
+                112.dp,
+                Modifier.graphicsLayer {
+                    translationY = (1f - drop.value) * -120.dp.toPx() + float.dp.toPx()
+                    alpha = drop.value.coerceIn(0f, 1f)
+                },
+            )
+            Text("PocketDrop", style = MaterialTheme.typography.displaySmall, modifier = Modifier.enterStagger(2))
             Text(
                 "Earn Twitch drops in the background. No video, barely any battery.",
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
                 color = scheme.onSurfaceVariant,
+                modifier = Modifier.enterStagger(3),
             )
             Spacer(Modifier.height(8.dp))
-            Feature(AppIcons.Bolt, "Watches for you", "Sends Twitch the same once-a-minute signal its player does, without streaming anything.")
-            Feature(AppIcons.Gamepad, "Your games first", "Pick games and PocketDrop mines them the moment they go live, even overnight.")
-            Feature(Icons.Default.CheckCircle, "Claims automatically", "Finished drops are claimed as soon as they're ready.")
+            Feature(AppIcons.Bolt, "Watches for you", "Sends Twitch the same once-a-minute signal its player does, without streaming anything.", Modifier.enterStagger(4))
+            Feature(AppIcons.Gamepad, "Your games first", "Pick games and PocketDrop mines them the moment they go live, even overnight.", Modifier.enterStagger(5))
+            Feature(Icons.Default.CheckCircle, "Claims automatically", "Finished drops are claimed as soon as they're ready.", Modifier.enterStagger(6))
             Spacer(Modifier.height(8.dp))
 
             if (account.busy) {
@@ -99,15 +126,17 @@ fun OnboardingScreen(vm: MainViewModel) {
             }
             account.error?.let { StatusLine(false, it) }
 
+            val signIn = remember { MutableInteractionSource() }
             Button(
                 onClick = { login.launch(Intent(context, LoginActivity::class.java)) },
                 enabled = !account.busy,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                interactionSource = signIn,
+                modifier = Modifier.fillMaxWidth().height(56.dp).enterStagger(7).pressScale(signIn),
             ) { Text("Sign in with Twitch", style = MaterialTheme.typography.titleMedium) }
             OutlinedButton(
                 onClick = { codeLogin = true },
                 enabled = !account.busy,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp).enterStagger(8),
             ) { Text("Use a code instead") }
             TextButton(onClick = { pasting = true }, enabled = !account.busy) { Text("Paste a session token") }
             Hint(
@@ -122,8 +151,8 @@ fun OnboardingScreen(vm: MainViewModel) {
 }
 
 @Composable
-private fun Feature(icon: ImageVector, title: String, body: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+private fun Feature(icon: ImageVector, title: String, body: String, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Box(
             Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer),
             contentAlignment = Alignment.Center,

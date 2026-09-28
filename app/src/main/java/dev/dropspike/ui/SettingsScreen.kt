@@ -59,6 +59,7 @@ fun SettingsScreen(vm: MainViewModel) {
     val perms = rememberPermissionState()
     val context = LocalContext.current
     var advanced by rememberSaveable { mutableStateOf(false) }
+    val haptics = rememberHaptics()
 
     ScreenList {
         item { ScreenHeader("Settings") }
@@ -109,13 +110,13 @@ fun SettingsScreen(vm: MainViewModel) {
         item {
             Section("Mining", "When and how PocketDrop watches", icon = AppIcons.Drop) {
                 SettingRow("Only while charging", "Pause mining when the phone is unplugged", icon = AppIcons.Bolt) {
-                    Switch(checked = mining.onlyCharging, onCheckedChange = vm::setOnlyCharging)
+                    Switch(checked = mining.onlyCharging, onCheckedChange = { haptics.tick(); vm.setOnlyCharging(it) })
                 }
                 SettingRow("Only on Wi-Fi", "Pause mining on mobile data (it uses very little: no video is streamed)", icon = AppIcons.Wifi) {
-                    Switch(checked = mining.onlyWifi, onCheckedChange = vm::setOnlyWifi)
+                    Switch(checked = mining.onlyWifi, onCheckedChange = { haptics.tick(); vm.setOnlyWifi(it) })
                 }
                 SettingRow("Watch two channels", "Mine two games at once, like a second browser tab", icon = AppIcons.Gamepad) {
-                    Switch(checked = mining.twoChannels, onCheckedChange = vm::setTwoChannels)
+                    Switch(checked = mining.twoChannels, onCheckedChange = { haptics.tick(); vm.setTwoChannels(it) })
                 }
                 if (mining.twoChannels) {
                     StatusLine(false, "Experimental: Twitch may not credit both channels every minute, and sometimes credits only one. Check the uptime chart; turn this off if progress slows.")
@@ -128,14 +129,14 @@ fun SettingsScreen(vm: MainViewModel) {
                     THEMES.forEachIndexed { i, (mode, label) ->
                         SegmentedButton(
                             selected = themeMode == mode,
-                            onClick = { vm.setThemeMode(mode) },
+                            onClick = { haptics.tick(); vm.setThemeMode(mode) },
                             shape = SegmentedButtonDefaults.itemShape(i, THEMES.size),
                         ) { Text(label) }
                     }
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     SettingRow("Wallpaper colours", "Use Material You colours instead of PocketDrop purple") {
-                        Switch(checked = dynamic, onCheckedChange = vm::setDynamicColor)
+                        Switch(checked = dynamic, onCheckedChange = { haptics.tick(); vm.setDynamicColor(it) })
                     }
                 }
             }
@@ -153,8 +154,8 @@ fun SettingsScreen(vm: MainViewModel) {
             }
         }
         if (advanced) {
-            item { IntegrityCard(vm) }
-            item { GateCard(vm) }
+            item(key = "integrity") { Box(Modifier.animateItem()) { IntegrityCard(vm) } }
+            item(key = "gate") { Box(Modifier.animateItem()) { GateCard(vm) } }
         }
         item {
             Section("Security", icon = Icons.Default.Lock) {

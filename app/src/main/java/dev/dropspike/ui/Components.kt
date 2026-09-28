@@ -39,12 +39,18 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import dev.dropspike.R
 import dev.dropspike.twitch.WatchedGame
 
@@ -55,6 +61,7 @@ internal fun Section(
     subtitle: String? = null,
     icon: ImageVector? = null,
     modifier: Modifier = Modifier,
+    action: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -62,7 +69,10 @@ internal fun Section(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.padding(20.dp).animateContentSize(spring(stiffness = Spring.StiffnessMediumLow)),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (icon != null) {
                     Box(
@@ -73,12 +83,13 @@ internal fun Section(
                     }
                     Spacer(Modifier.width(12.dp))
                 }
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text(title, style = MaterialTheme.typography.titleMedium)
                     if (subtitle != null) {
                         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                action()
             }
             content()
         }
@@ -136,12 +147,17 @@ internal fun Buttons(content: @Composable () -> Unit) =
 
 /** A small rounded label, e.g. "LIVE" or "Needs account link". */
 @Composable
-internal fun Pill(text: String, container: Color, content: Color, dot: Color? = null) {
+internal fun Pill(text: String, container: Color, content: Color, dot: Color? = null, live: Boolean = false) {
     Surface(color = container, contentColor = content, shape = CircleShape) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (dot != null) {
-                Box(Modifier.size(7.dp).clip(CircleShape).background(dot))
-                Spacer(Modifier.width(6.dp))
+                if (live) {
+                    LiveDot(dot, 7.dp)
+                    Spacer(Modifier.width(2.dp))
+                } else {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(dot))
+                    Spacer(Modifier.width(6.dp))
+                }
             }
             Text(text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
         }
@@ -167,8 +183,9 @@ internal fun GameArt(game: WatchedGame, width: Dp, modifier: Modifier = Modifier
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
         urls.getOrNull(attempt)?.let { url ->
+            val context = LocalContext.current
             AsyncImage(
-                model = url,
+                model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(MotionTokens.MEDIUM).build() },
                 contentDescription = game.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -227,9 +244,15 @@ internal fun SettingRow(
 
 /** Friendly placeholder for an empty list. */
 @Composable
-internal fun EmptyState(icon: ImageVector, title: String, body: String, action: @Composable () -> Unit = {}) {
+internal fun EmptyState(
+    icon: ImageVector,
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier,
+    action: @Composable () -> Unit = {},
+) {
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 20.dp),
+        modifier.fillMaxWidth().padding(vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -240,7 +263,7 @@ internal fun EmptyState(icon: ImageVector, title: String, body: String, action: 
             Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         action()
     }
 }

@@ -5,6 +5,17 @@ package dev.dropspike.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -76,6 +87,7 @@ fun GamesScreen(vm: MainViewModel) {
     val state by vm.games.collectAsStateWithLifecycle()
     val perms = rememberPermissionState()
     var picking by remember { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.reloadGames() }
 
     ScreenList {
@@ -88,33 +100,49 @@ fun GamesScreen(vm: MainViewModel) {
                 }
             }
         }
-        item {
-            Section("Watch list", "${state.watched.size} game${if (state.watched.size == 1) "" else "s"}", icon = AppIcons.Gamepad) {
-                if (state.watched.isEmpty()) {
+        if (state.watched.isEmpty()) {
+            item(key = "empty") {
+                Section("Watch list", icon = AppIcons.Gamepad, modifier = Modifier.animateItem()) {
                     EmptyState(AppIcons.Gamepad, "No games yet", "Add the games whose drops you want. They're mined even before you've started their campaign.") {
                         FilledTonalButton(onClick = { picking = true }) { Text("Choose games") }
                     }
-                } else {
-                    state.watched.forEachIndexed { i, g ->
-                        WatchedRow(
-                            game = g,
-                            first = i == 0,
-                            last = i == state.watched.lastIndex,
-                            onUp = { vm.moveWatchedUp(g) },
-                            onDown = { vm.moveWatchedDown(g) },
-                            onRemove = { vm.toggleWatched(g) },
-                        )
-                    }
                 }
+            }
+        } else {
+            item(key = "watch-header") {
+                Row(Modifier.animateItem().padding(top = 4.dp), verticalAlignment = Alignment.Bottom) {
+                    Text("Watch list", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    Hint("${state.watched.size} game${if (state.watched.size == 1) "" else "s"} · top is mined first")
+                }
+            }
+            itemsIndexed(state.watched, key = { _, g -> "w-" + g.slug }) { i, g ->
+                WatchedRow(
+                    game = g,
+                    position = i + 1,
+                    first = i == 0,
+                    last = i == state.watched.lastIndex,
+                    onUp = { haptics.tick(); vm.moveWatchedUp(g) },
+                    onDown = { haptics.tick(); vm.moveWatchedDown(g) },
+                    onRemove = { haptics.tick(); vm.toggleWatched(g) },
+                    modifier = Modifier.animateItem(),
+                )
+            }
+        }
+        item(key = "order") {
+            Section("Mining order", icon = AppIcons.Drop, modifier = Modifier.animateItem()) {
                 SettingRow(
                     "Only mine these games",
                     "Otherwise drops you already have in progress are mined after them",
                 ) {
-                    Switch(checked = state.onlyWatched, onCheckedChange = vm::setOnlyWatched, enabled = state.watched.isNotEmpty())
+                    Switch(
+                        checked = state.onlyWatched,
+                        onCheckedChange = { haptics.tick(); vm.setOnlyWatched(it) },
+                        enabled = state.watched.isNotEmpty(),
+                    )
                 }
             }
         }
-        item {
+        item(key = "checks") {
             Section("Background checks", "Start mining on its own when a game goes live", icon = AppIcons.Schedule) {
                 SettingRow(
                     "Auto mine",
@@ -122,13 +150,13 @@ fun GamesScreen(vm: MainViewModel) {
                     else "Checks only send a notification; you tap to start",
                     icon = AppIcons.Bolt,
                 ) {
-                    Switch(checked = state.autoMine, onCheckedChange = vm::setAutoMine)
+                    Switch(checked = state.autoMine, onCheckedChange = { haptics.tick(); vm.setAutoMine(it) })
                 }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     WAKE_CHOICES.forEachIndexed { i, (minutes, label) ->
                         SegmentedButton(
                             selected = state.wakeIntervalMin == minutes,
-                            onClick = { vm.setWakeInterval(minutes) },
+                            onClick = { haptics.tick(); vm.setWakeInterval(minutes) },
                             shape = SegmentedButtonDefaults.itemShape(i, WAKE_CHOICES.size),
                         ) { Text(label) }
                     }
@@ -156,29 +184,54 @@ fun GamesScreen(vm: MainViewModel) {
 }
 
 @Composable
-private fun WatchedRow(game: WatchedGame, first: Boolean, last: Boolean, onUp: () -> Unit, onDown: () -> Unit, onRemove: () -> Unit) {
+private fun WatchedRow(
+    game: WatchedGame,
+    position: Int,
+    first: Boolean,
+    last: Boolean,
+    onUp: () -> Unit,
+    onDown: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        GameArt(game, 40.dp)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(game.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (game.needsLink) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clip(CircleShape).clickable(enabled = game.linkUrl != null) {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(game.linkUrl)))
-                    },
+    val scheme = MaterialTheme.colorScheme
+    Surface(shape = MaterialTheme.shapes.large, color = scheme.surfaceContainerLow, modifier = modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(contentAlignment = Alignment.TopStart) {
+                GameArt(game, 44.dp, modifier = Modifier.padding(start = 6.dp, top = 6.dp))
+                Box(
+                    Modifier.size(22.dp).clip(CircleShape).background(if (first) scheme.primary else scheme.secondaryContainer),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Pill(if (game.linkUrl != null) "Link account to earn" else "Needs account link", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
+                    Text(
+                        "$position",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (first) scheme.onPrimary else scheme.onSecondaryContainer,
+                    )
                 }
-            } else if (game.campaigns > 0) {
-                Hint("${game.campaigns} active campaign${if (game.campaigns == 1) "" else "s"}")
             }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(game.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (game.needsLink) {
+                    Box(
+                        Modifier.clip(CircleShape).clickable(enabled = game.linkUrl != null) {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(game.linkUrl)))
+                        },
+                    ) {
+                        Pill(if (game.linkUrl != null) "Link account to earn" else "Needs account link", scheme.errorContainer, scheme.onErrorContainer)
+                    }
+                } else if (game.campaigns > 0) {
+                    Hint("${game.campaigns} active campaign${if (game.campaigns == 1) "" else "s"}")
+                } else if (first) {
+                    Hint("Mined first")
+                }
+            }
+            IconButton(onClick = onUp, enabled = !first) { Icon(Icons.Default.KeyboardArrowUp, "Move ${game.name} up") }
+            IconButton(onClick = onDown, enabled = !last) { Icon(Icons.Default.KeyboardArrowDown, "Move ${game.name} down") }
+            IconButton(onClick = onRemove) { Icon(Icons.Default.Close, "Remove ${game.name}", tint = scheme.onSurfaceVariant) }
         }
-        IconButton(onClick = onUp, enabled = !first) { Icon(Icons.Default.KeyboardArrowUp, "Move ${game.name} up") }
-        IconButton(onClick = onDown, enabled = !last) { Icon(Icons.Default.KeyboardArrowDown, "Move ${game.name} down") }
-        IconButton(onClick = onRemove) { Icon(Icons.Default.Close, "Remove ${game.name}") }
     }
 }
 
@@ -186,8 +239,14 @@ private fun WatchedRow(game: WatchedGame, first: Boolean, last: Boolean, onUp: (
 @Composable
 private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
+    var onlySelected by remember { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     val watched = state.watched.map { it.slug }.toSet()
-    val shown = state.catalog.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+    // Games you can actually earn from first; ones needing an account link last.
+    val shown = state.catalog
+        .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+        .filter { !onlySelected || it.slug in watched }
+        .sortedBy { it.needsLink }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Scaffold(
@@ -219,6 +278,11 @@ private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Un
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.size(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !onlySelected, onClick = { onlySelected = false }, label = { Text("All ${state.catalog.size}") })
+                        FilterChip(selected = onlySelected, onClick = { onlySelected = true }, label = { Text("Selected ${watched.size}") })
+                    }
+                    Spacer(Modifier.size(4.dp))
                     when {
                         state.error != null -> StatusLine(false, state.error)
                         state.busy && state.catalog.isEmpty() -> Hint("Loading games with active campaigns…")
@@ -236,7 +300,7 @@ private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Un
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         items(shown, key = { it.slug }) { g ->
-                            GameTile(g, selected = g.slug in watched, onToggle = { vm.toggleWatched(g) })
+                            GameTile(g, selected = g.slug in watched, onToggle = { haptics.tick(); vm.toggleWatched(g) }, modifier = Modifier.animateItem())
                         }
                     }
                 }
@@ -246,10 +310,18 @@ private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Un
 }
 
 @Composable
-private fun GameTile(game: WatchedGame, selected: Boolean, onToggle: () -> Unit) {
+private fun GameTile(game: WatchedGame, selected: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val borderColor by animateColorAsState(if (selected) scheme.primary else Color.Transparent, tween(MotionTokens.SHORT), label = "border")
+    val badge by animateFloatAsState(if (selected) 1f else 0f, spring(dampingRatio = 0.5f, stiffness = 600f), label = "badge")
+    val artScale by animateFloatAsState(if (selected) 0.94f else 1f, spring(dampingRatio = 0.55f, stiffness = 500f), label = "art")
     Column(
-        Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onToggle).padding(4.dp),
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onToggle)
+            .pressScale(interaction)
+            .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -257,11 +329,20 @@ private fun GameTile(game: WatchedGame, selected: Boolean, onToggle: () -> Unit)
             GameArt(
                 game,
                 96.dp,
-                modifier = if (selected) Modifier.border(BorderStroke(3.dp, scheme.primary), RoundedCornerShape(16.dp)) else Modifier,
+                modifier = Modifier
+                    .graphicsLayer { scaleX = artScale; scaleY = artScale }
+                    .border(BorderStroke(3.dp, borderColor), RoundedCornerShape(16.dp)),
             )
-            if (selected) {
+            // Scale-and-fade badge (AnimatedVisibility can't be used here: Box sits inside a Column scope).
+            if (badge > 0.01f) {
                 Box(
-                    Modifier.align(Alignment.TopEnd).padding(6.dp).size(24.dp).clip(CircleShape).background(scheme.primary),
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .graphicsLayer { scaleX = badge; scaleY = badge; alpha = badge.coerceIn(0f, 1f) }
+                        .padding(6.dp)
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(scheme.primary),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(Icons.Default.Check, "Selected", tint = scheme.onPrimary, modifier = Modifier.size(16.dp))

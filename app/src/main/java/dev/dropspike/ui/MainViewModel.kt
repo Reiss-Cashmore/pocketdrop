@@ -139,6 +139,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         reloadGames()
     }
 
+    /** Put [game] at the top of the watch list (adding it if needed). */
+    fun mineFirst(game: WatchedGame) {
+        val rest = prefs.watchedGames.filterNot { it.slug == game.slug || game.matches(it.id, it.name) }
+        val entry = prefs.watchedGames.firstOrNull { it.slug == game.slug || game.matches(it.id, it.name) }
+            ?: prefs.gameCatalog.firstOrNull { game.matches(it.id, it.name) }
+            ?: game
+        prefs.watchedGames = listOf(entry) + rest
+        DiagLog.i("games: ${game.name} moved to the top; list now ${prefs.watchedGames.joinToString { it.name }}")
+        reloadGames()
+    }
+
     fun moveWatchedUp(game: WatchedGame) {
         val list = prefs.watchedGames.toMutableList()
         val i = list.indexOfFirst { it.slug == game.slug }
