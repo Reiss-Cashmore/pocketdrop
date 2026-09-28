@@ -56,6 +56,7 @@ class IntegrityMinter(private val webView: WebView) {
         page: MintPage,
         siteUrl: String,
         authToken: String,
+        setSessionCookie: Boolean,
         headers: Map<String, String>,
         deviceId: String,
         scriptUrl: String,
@@ -67,8 +68,13 @@ class IntegrityMinter(private val webView: WebView) {
         val cookies = CookieManager.getInstance()
         cookies.setAcceptCookie(true)
         cookies.setAcceptThirdPartyCookies(webView, true)
-        // Same as DropForge's Network.setCookie: the page must be signed in as this token's user.
-        cookies.setCookie(siteUrl, "auth-token=$authToken; Domain=.twitch.tv; Path=/; Secure")
+        // DropForge signs the page in (Network.setCookie) with a web-client token. Other clients'
+        // tokens are not site sessions, and the site may sign them out, so leave those off.
+        if (setSessionCookie) {
+            cookies.setCookie(siteUrl, "auth-token=$authToken; Domain=.twitch.tv; Path=/; Secure")
+        } else {
+            cookies.setCookie(siteUrl, "auth-token=; Domain=.twitch.tv; Path=/; Secure; Max-Age=0")
+        }
         cookies.flush()
 
         val loaded = CompletableDeferred<Unit>()

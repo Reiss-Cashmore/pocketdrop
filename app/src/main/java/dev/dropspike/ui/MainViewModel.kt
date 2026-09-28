@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
+import dev.dropspike.data.Prefs
 import dev.dropspike.twitch.ApiOrigin
 import dev.dropspike.twitch.BrowserProbe
 import dev.dropspike.twitch.Campaign
@@ -204,6 +205,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 page = state.page,
                 siteUrl = site,
                 authToken = token,
+                setSessionCookie = prefs.clientId == Prefs.WEB_CLIENT_ID,
                 headers = headers,
                 deviceId = prefs.deviceId,
                 scriptUrl = prefs.kasadaScriptUrl,
@@ -234,6 +236,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val rows = mutableListOf<GateResult>()
         var campaigns: List<Campaign>? = null
 
+        val token = prefs.authToken
+        val v = if (token == null) Result.failure(IllegalStateException("Not signed in")) else runCatching { api.validate(token) }
+        rows += GateResult(
+            "Token still valid",
+            v.isSuccess,
+            v.fold({ "yes, ${it.login}, client ${it.clientId.take(6)}…, ${it.expiresInSec / 3600}h left" }, { it.message ?: it.toString() }),
+        )
+
         val inv = runCatching { api.inventory() }
         rows += GateResult(
             "Inventory (not gated)",
@@ -261,7 +271,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _gate.value = GateState(busy = true, rows = rows.toList(), campaigns = campaigns)
         }
         if (prefs.integrityToken == null) rows += GateResult("With token", null, "No integrity token minted")
-        DiagLog.i("gate: client ${prefs.clientId}, inventory → ${rows.first().text}")
+        DiagLog.i("gate: client ${prefs.clientId}; ${rows.take(2).joinToString { "${it.label} → ${it.text}" }}")
         _gate.value = GateState(busy = false, rows = rows.toList(), campaigns = campaigns)
     }
 

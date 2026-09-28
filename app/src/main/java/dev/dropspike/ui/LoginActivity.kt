@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
+import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
@@ -73,6 +74,7 @@ class LoginActivity : ComponentActivity() {
                 var progress by remember { mutableIntStateOf(0) }
                 var url by remember { mutableStateOf("") }
                 var desktop by remember { mutableStateOf(false) }
+                var software by remember { mutableStateOf(false) }
 
                 Scaffold(
                     topBar = {
@@ -116,6 +118,16 @@ class LoginActivity : ComponentActivity() {
                                     selected = url.startsWith("https://m.twitch.tv"),
                                     onClick = { webView?.loadUrl(MOBILE_LOGIN_URL) },
                                     label = { Text("Mobile site") },
+                                )
+                                FilterChip(
+                                    selected = software,
+                                    onClick = {
+                                        software = !software
+                                        // Tells a GPU/compositing problem apart from a page that never renders.
+                                        webView?.setLayerType(if (software) View.LAYER_TYPE_SOFTWARE else View.LAYER_TYPE_HARDWARE, null)
+                                        DiagLog.i("login: software rendering ${if (software) "on" else "off"}")
+                                    },
+                                    label = { Text("Software") },
                                 )
                             }
                         }

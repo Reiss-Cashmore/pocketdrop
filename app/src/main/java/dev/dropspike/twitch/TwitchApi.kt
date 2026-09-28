@@ -21,10 +21,14 @@ data class Campaign(val id: String, val name: String, val game: String, val stat
 /** `campaigns == null` means Twitch returned `dropCampaigns: null`, i.e. the integrity gate. */
 data class DashboardResult(val campaigns: List<Campaign>?, val errors: List<String>)
 
-/** Clients whose device-code login Twitch still accepted on 2026-09-23 (rangermix/TwitchDropsMiner#118). */
+/**
+ * Clients whose device-code login Twitch still accepted on 2026-09-23 (rangermix/TwitchDropsMiner#118).
+ * Smart TV tokens work on GQL (campaign list gated). Mobile-web tokens validate but GQL answered
+ * every request with 401 "Authorization token is invalid" in testing on 2026-09-28.
+ */
 enum class DeviceClient(val label: String, val clientId: String) {
-    MobileWeb("Mobile web", "r8s4dac0uhzifbpu9sjdiwzctle17ff"),
     SmartTv("Smart TV", "ue6666qo983tsx6so1t0vnawi233wa"),
+    MobileWeb("Mobile web", "r8s4dac0uhzifbpu9sjdiwzctle17ff"),
 }
 
 /** Which Twitch site the GQL request claims to come from (Origin/Referer). */

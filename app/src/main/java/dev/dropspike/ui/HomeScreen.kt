@@ -262,7 +262,7 @@ private fun DeviceLoginDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                     }
                     else -> {
                         state.error?.let { StatusLine(false, it) }
-                        Hint("Choose which Twitch client to sign in as. Mobile web is a web client, so it may also work with the integrity token; Smart TV is the fallback.")
+                        Hint("Smart TV is the known-good option: inventory and progress work, though Twitch hides the campaign list from it. Mobile web tokens were rejected by Twitch's API in testing.")
                         Buttons {
                             DeviceClient.entries.forEach { c ->
                                 FilledTonalButton(onClick = { vm.startDeviceLogin(c) }) { Text(c.label) }
