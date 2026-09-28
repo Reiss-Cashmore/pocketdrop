@@ -23,6 +23,7 @@ import dev.dropspike.twitch.IntegrityToken
 import dev.dropspike.twitch.MintPage
 import dev.dropspike.twitch.MintSurface
 import dev.dropspike.twitch.Queries
+import dev.dropspike.twitch.Reward
 import dev.dropspike.twitch.WatchedGame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,15 @@ data class GamesState(
     val wakeIntervalMin: Int = 0,
     val lastWakeCheck: String = "",
     val autoMine: Boolean = true,
+)
+
+data class MiningSettings(val twoChannels: Boolean, val onlyCharging: Boolean, val onlyWifi: Boolean)
+
+data class RewardsState(
+    val account: List<Reward> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+    val updatedAt: Long = 0,
 )
 
 data class InventoryState(
@@ -186,6 +196,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _inventory = MutableStateFlow(InventoryState())
     val inventory: StateFlow<InventoryState> = _inventory
+
+    private val _themeMode = MutableStateFlow(prefs.themeMode)
+    val themeMode: StateFlow<String> = _themeMode
+
+    fun setThemeMode(mode: String) {
+        prefs.themeMode = mode
+        _themeMode.value = mode
+        applyNightMode(getApplication(), mode)
+        DiagLog.i("appearance: theme $mode")
+    }
+
+    private val _mining = MutableStateFlow(loadMining())
+    val mining: StateFlow<MiningSettings> = _mining
+
+    private fun loadMining() = MiningSettings(prefs.twoChannels, prefs.onlyCharging, prefs.onlyWifi)
+
+    fun setTwoChannels(on: Boolean) {
+        prefs.twoChannels = on
+        DiagLog.i("mining: two channels = $on")
+        _mining.value = loadMining()
+    }
+
+    fun setOnlyCharging(on: Boolean) {
+        prefs.onlyCharging = on
+        DiagLog.i("mining: only while charging = $on")
+        WakeWorker.schedule(getApplication())
+        _mining.value = loadMining()
+    }
+
+    fun setOnlyWifi(on: Boolean) {
+        prefs.onlyWifi = on
+        DiagLog.i("mining: only on Wi-Fi = $on")
+        WakeWorker.schedule(getApplication())
+        _mining.value = loadMining()
+    }
+
+    private val _rewards = MutableStateFlow(RewardsState())
+    val rewards: StateFlow<RewardsState> = _rewards
+
+    /** Rewards on the account (Inventory gameEventDrops); PocketDrop's own claims come from ClaimLog. */
+    fun refreshRewards() = viewModelScope.launch {
+        if (prefs.authToken == null || _rewards.value.loading) return@launch
+        _rewards.value = _rewards.value.copy(loading = true, error = null)
+        val result = runCatching { api.rewards() }
+        _rewards.value = RewardsState(
+            account = result.getOrDefault(_rewards.value.account),
+            loading = false,
+            error = result.exceptionOrNull()?.message,
+            updatedAt = if (result.isSuccess) System.currentTimeMillis() else _rewards.value.updatedAt,
+        )
+        DiagLog.i("rewards: ${result.map { "${it.size} on the account" }.getOrElse { "failed: ${it.message}" }}")
+    }
 
     private val _dynamicColor = MutableStateFlow(prefs.dynamicColor)
     val dynamicColor: StateFlow<Boolean> = _dynamicColor

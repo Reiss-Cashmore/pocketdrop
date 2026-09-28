@@ -17,7 +17,6 @@
         </aapt:attr>
     </path>
     <path android:strokeColor="#BFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:pathData="M42.5,33 C40.8,36 40,38.6 40,41" />
-    <path android:strokeColor="#8CFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:pathData="M32.5,18 L32.5,27 M63.5,18 L63.5,25" />
     <path android:fillColor="#FFFFFFFF" android:pathData="M22,46 Q48,50 74,46 Q75.6,45.8 75.4,47.4 L73.4,67 Q73.2,69 71.4,70 L49.6,82.6 Q48,83.5 46.4,82.6 L24.6,70 Q22.8,69 22.6,67 L20.6,47.4 Q20.4,45.8 22,46 Z" />
     <path android:fillColor="#FFEDE9FE" android:pathData="M22,46 Q48,50 74,46 Q75.6,45.8 75.4,47.4 L75,51.5 Q48,55.5 21,51.5 L20.6,47.4 Q20.4,45.8 22,46 Z" />
     <path android:strokeColor="#FF7C3AED" android:strokeWidth="1.6" android:strokeLineCap="round" android:pathData="M69.40,58.28 L68.91,61.45 M68.49,64.11 L67.09,66.64 M64.75,67.98 L61.98,69.57 M59.64,70.91 L56.87,72.51 M54.54,73.85 L51.76,75.44 M49.43,76.78 L46.65,76.83 M44.32,75.49 L41.54,73.89 M39.21,72.55 L36.43,70.96 M34.10,69.62 L31.33,68.02 M28.99,66.68 L27.52,64.20 M27.11,61.54 L26.61,58.37" />

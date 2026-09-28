@@ -46,10 +46,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 private enum class Tab(val label: String, val icon: ImageVector) {
     Home("Home", Icons.Default.Home),
     Games("Games", AppIcons.Gamepad),
+    Rewards("Rewards", AppIcons.Trophy),
     Settings("Settings", Icons.Default.Settings),
 }
 
-/** Root: onboarding until signed in, then Home / Games / Settings. */
+/** Root: onboarding until signed in, then Home / Games / Rewards / Settings. */
 @Composable
 fun PocketDropApp(vm: MainViewModel) {
     val account by vm.account.collectAsStateWithLifecycle()
@@ -79,6 +80,7 @@ private fun MainShell(vm: MainViewModel) {
         when (tab) {
             Tab.Home -> HomeScreen(vm, onOpenGames = { tab = Tab.Games })
             Tab.Games -> GamesScreen(vm)
+            Tab.Rewards -> RewardsScreen(vm)
             Tab.Settings -> SettingsScreen(vm)
         }
     }

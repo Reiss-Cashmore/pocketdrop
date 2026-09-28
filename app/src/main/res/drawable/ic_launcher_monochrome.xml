@@ -9,7 +9,6 @@
     <group android:translateX="18" android:translateY="16" android:scaleX="0.75" android:scaleY="0.75">
     <path android:fillColor="#FFFFFFFF" android:pathData="M76,17 C76.672,21.32 77.68,22.328 82,23 C77.68,23.672 76.672,24.68 76,29 C75.328,24.68 74.32,23.672 70,23 C74.32,22.328 75.328,21.32 76,17 Z M22,26 C22.448,28.88 23.12,29.552 26,30 C23.12,30.448 22.448,31.12 22,34 C21.552,31.12 20.88,30.448 18,30 C20.88,29.552 21.552,28.88 22,26 Z M80,32.2 C80.3136,34.216 80.784,34.6864 82.8,35 C80.784,35.3136 80.3136,35.784 80,37.8 C79.6864,35.784 79.216,35.3136 77.2,35 C79.216,34.6864 79.6864,34.216 80,32.2 Z" />
     <path android:fillColor="#FFFFFFFF" android:pathData="M48,14 C48,14 34.5,30 34.5,41.5 A13.5,13.5 0 0,0 61.5,41.5 C61.5,30 48,14 48,14 Z" />
-    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:pathData="M32.5,18 L32.5,27 M63.5,18 L63.5,25" />
     <path android:fillColor="#FFFFFFFF" android:pathData="M22,46 Q48,50 74,46 Q75.6,45.8 75.4,47.4 L73.4,67 Q73.2,69 71.4,70 L49.6,82.6 Q48,83.5 46.4,82.6 L24.6,70 Q22.8,69 22.6,67 L20.6,47.4 Q20.4,45.8 22,46 Z" />
     </group>
 </vector>

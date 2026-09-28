@@ -13,8 +13,10 @@ channels for the games you choose, and claims finished drops automatically.
   2 h). With **Auto mine** on (the default), mining starts by itself whenever the app wakes up
   and a watched game is live: on each check, when you open the app, and after a reboot or an
   update. Tapping Stop pauses auto mine for an hour.
-- **Settings:** account, background permissions, appearance, a full shareable diagnostics
-  report, and advanced tools.
+- **Rewards:** every drop PocketDrop claimed, plus every reward on your Twitch account.
+- **Settings:** account, background permissions, mining rules (only while charging, only on
+  Wi-Fi, an experimental two-channel mode), theme (system, light or dark), security, a full
+  shareable diagnostics report, and advanced tools.
 
 It began as a spike to prove three things on Android, all now confirmed on a Pixel 10 Pro Fold
 (GrapheneOS): a WebView login yields a web-client session, an Android WebView can mint a
@@ -34,8 +36,22 @@ Chrome over CDP; here an Android WebView plays that role.
 3. For updates straight to the phone, push a tag (`git tag v0.1.0 && git push --tags`) and
    point [Obtainium](https://github.com/ImranR98/Obtainium) at the repo's releases.
 
-Every build is signed with the same throwaway key in `keystore/`, so new builds install
-over old ones. Swap in a private key before giving the app to anyone else.
+Builds are signed with your private key when the repo has the signing secrets (below),
+otherwise with the public throwaway key in `keystore/`. Settings → Security shows which.
+
+### Signing
+The throwaway key is public, so anyone could sign an "update" that installs over it. To use
+your own key:
+
+1. Create one (any machine with Java):
+   `keytool -genkeypair -v -keystore pocketdrop.jks -alias pocketdrop -keyalg RSA -keysize 4096 -validity 10000`
+2. Base64 it: `base64 -w0 pocketdrop.jks > pocketdrop.jks.b64` (macOS: `base64 -i pocketdrop.jks`).
+3. In the repo: **Settings → Secrets and variables → Actions**, add
+   `SIGNING_KEYSTORE_B64` (the base64 text), `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS`
+   (`pocketdrop`) and `SIGNING_KEY_PASSWORD` (same as the store password unless you chose another).
+4. Re-run the build. Android refuses an update signed with a different key, so uninstall
+   the old PocketDrop once (you'll need to sign in to Twitch again), then install the new APK.
+   Keep `pocketdrop.jks` and its password somewhere safe: every future update needs them.
 
 ### Locally
 Open in Android Studio (or run `./gradlew assembleRelease` with the Android SDK installed).

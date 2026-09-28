@@ -18,6 +18,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.R
+import dev.dropspike.data.Conditions
 import dev.dropspike.data.DiagLog
 import dev.dropspike.data.MinuteStatus
 import dev.dropspike.data.SystemInfo
@@ -47,6 +48,10 @@ data class MinerStatus(
     val detail: List<Pair<String, String>> = emptyList(),
     val startedAt: Long = 0,
     val now: MiningNow? = null,
+    /** The second channel, when watching two. */
+    val second: MiningNow? = null,
+    /** Set while the charging / Wi-Fi rule is holding mining back. */
+    val waiting: String? = null,
     val campaigns: List<InvCampaign> = emptyList(),
 )
 
@@ -120,6 +125,7 @@ class MinerService : Service() {
         loop = scope.launch {
             var last = SystemClock.elapsedRealtime()
             var tick = 0
+            var waitTicks = 0
             while (isActive) {
                 wakeLock?.acquire(WAKELOCK_MS)
                 val started = SystemClock.elapsedRealtime()
@@ -129,7 +135,11 @@ class MinerService : Service() {
                 prefs.lastTickAt = System.currentTimeMillis()
                 if (tick > 1 && gap > 90) DiagLog.w("service: tick $tick is late, ${gap}s since the previous one (expected ~60s)")
 
-                val (status, note) = try {
+                val waiting = Conditions.blocked(this@MinerService, prefs)
+                waitTicks = if (waiting != null) waitTicks + 1 else 0
+                val (status, note) = if (waiting != null) {
+                    MinuteStatus.Idle to "Paused: $waiting"
+                } else try {
                     miner.tick()
                 } catch (e: CancellationException) {
                     throw e
@@ -146,20 +156,22 @@ class MinerService : Service() {
                         ticks = tick,
                         maxGapSec = if (tick == 1) 0 else maxOf(it.maxGapSec, gap),
                         lastTickAt = prefs.lastTickAt,
-                        summary = miner.describe,
+                        summary = if (waiting != null) "Paused, $waiting" else miner.describe,
                         detail = miner.detail(),
-                        now = miner.now,
+                        now = if (waiting != null) null else miner.now,
+                        second = if (waiting != null) null else miner.second,
+                        waiting = waiting,
                         campaigns = miner.campaigns,
                     )
                 }
                 // With the wake timer on, don't burn battery idling: stop and let the next check restart us.
-                if (prefs.wakeIntervalMin > 0 && miner.idleTicks >= IDLE_STOP_TICKS) {
-                    DiagLog.i("service: nothing to mine for $IDLE_STOP_TICKS min, stopping until the next wake check")
+                if (prefs.wakeIntervalMin > 0 && (miner.idleTicks >= IDLE_STOP_TICKS || waitTicks >= IDLE_STOP_TICKS)) {
+                    DiagLog.i("service: ${if (waitTicks > 0) waiting else "nothing to mine"} for $IDLE_STOP_TICKS min, stopping until the next wake check")
                     stopSelf()
                     break
                 }
                 getSystemService(android.app.NotificationManager::class.java)
-                    .notify(NOTIFICATION_ID, notification(miner.describe))
+                    .notify(NOTIFICATION_ID, notification(if (waiting != null) "Paused, $waiting" else miner.describe))
                 // One tick per minute, measured from the start of this tick.
                 delay((TICK_MS - took).coerceAtLeast(5_000))
             }
@@ -229,7 +241,7 @@ class MinerService : Service() {
         systemEvents?.let { runCatching { unregisterReceiver(it) } }
         networkCallback?.let { cb -> runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) } }
         DropSpikeApp.instance.prefs.sessionActive = false
-        MinerState.update { it.copy(running = false, now = null) }
+        MinerState.update { it.copy(running = false, now = null, second = null, waiting = null) }
         super.onDestroy()
     }
 

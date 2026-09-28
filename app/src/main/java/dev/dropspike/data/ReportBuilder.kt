@@ -43,6 +43,7 @@ object ReportBuilder {
         kv("Generated", SystemInfo.time(now))
         kv("App", SystemInfo.appVersion(context))
         kv("Device", SystemInfo.device())
+        kv("Signing key", if (SystemInfo.signedWithPublicKey(context)) "public throwaway key (keystore/spike.jks)" else "private key")
         kv("WebView", SystemInfo.webView())
         kv("Process", "pid ${Process.myPid()}, up ${(SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime()) / 60_000} min")
 
@@ -67,6 +68,11 @@ object ReportBuilder {
         kv("Only mine watched games", prefs.onlyWatched)
         kv("Background check", if (prefs.wakeIntervalMin == 0) "off" else "every ${prefs.wakeIntervalMin} min")
         kv("Auto mine", prefs.autoMine)
+        kv("Watch two channels", prefs.twoChannels)
+        kv("Only while charging", prefs.onlyCharging)
+        kv("Only on Wi-Fi", prefs.onlyWifi)
+        kv("Theme", prefs.themeMode)
+        kv("Claims recorded by PocketDrop", ClaimLog.entries.value.size)
         kv("Game list", "${prefs.gameCatalog.size} games, updated ${SystemInfo.time(prefs.gameCatalogAt)}")
 
         section("Power, permissions, network")
@@ -84,6 +90,7 @@ object ReportBuilder {
         kv("Largest gap between ticks", "${status.maxGapSec}s")
         kv("Ended without Stop (killed?)", !status.running && prefs.sessionActive)
         kv("Doing", status.summary.ifEmpty { "—" })
+        kv("Paused by charging/Wi-Fi rule", status.waiting ?: "no")
         status.detail.forEach { (k, v) -> kv(k, v) }
 
         val entries = UptimeLog.entries.value.sortedBy { it.atMs }

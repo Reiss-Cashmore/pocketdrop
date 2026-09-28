@@ -16,7 +16,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val dynamic by vm.dynamicColor.collectAsStateWithLifecycle()
-            DropSpikeTheme(dynamicColor = dynamic) { PocketDropApp(vm) }
+            val themeMode by vm.themeMode.collectAsStateWithLifecycle()
+            DropSpikeTheme(dynamicColor = dynamic, themeMode = themeMode) { PocketDropApp(vm) }
         }
     }
 

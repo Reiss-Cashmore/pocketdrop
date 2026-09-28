@@ -1,6 +1,8 @@
 package dev.dropspike.service
 
 import android.content.Context
+import dev.dropspike.data.ClaimEntry
+import dev.dropspike.data.ClaimLog
 import dev.dropspike.data.DiagLog
 import dev.dropspike.data.MinuteStatus
 import dev.dropspike.data.Prefs
@@ -39,18 +41,27 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
 
     private data class Target(val game: WatchedGame, val stream: LiveStream, val spadeUrl: String)
 
-    /** What is being mined right now, for the home screen. */
+    /** One channel being watched, with its own credit bookkeeping. */
+    private class Slot(val target: Target, var lastMinutes: Int) {
+        var withoutCredit = 0
+        var onTarget = 0
+        var credited = false
+        val since = System.currentTimeMillis()
+    }
+
+    /** What is being mined right now, for the home screen (the first channel). */
     var now: MiningNow? = null
+        private set
+
+    /** The second channel, when "Watch two channels" is on and a second game is live. */
+    var second: MiningNow? = null
         private set
 
     /** The inventory as of the last tick, so the UI doesn't have to fetch it again. */
     var campaigns: List<InvCampaign> = emptyList()
         private set
 
-    private var target: Target? = null
-    private var lastMinutes = -1
-    private var ticksWithoutCredit = 0
-    private var ticksOnTarget = 0
+    private val slots = mutableListOf<Slot>()
 
     /** Game key → until when it is skipped because watching it earned nothing. */
     private val cooldown = mutableMapOf<String, Long>()
@@ -66,21 +77,30 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     var describe: String = "Starting"
         private set
 
+    private val maxSlots get() = if (prefs.twoChannels) 2 else 1
+
     /** Internal state, for the report. */
     fun detail(): List<Pair<String, String>> {
         val now = System.currentTimeMillis()
-        val t = target
-        return listOf(
-            "Target game" to (t?.game?.let { "${it.name} (id ${it.id.ifEmpty { "?" }}, slug ${it.slug})" } ?: "none"),
-            "Channel" to (t?.stream?.let { "${it.login} (channel ${it.channelId}, broadcast ${it.broadcastId}, ${it.viewers} viewers, playing ${it.gameName})" } ?: "none"),
-            "Spade host" to (t?.spadeUrl?.let { android.net.Uri.parse(it).host.orEmpty() } ?: "none"),
-            "Unclaimed minutes at last reading" to lastMinutes.toString(),
-            "Minutes without credit" to ticksWithoutCredit.toString(),
-            "Minutes on this channel" to ticksOnTarget.toString(),
-            "Idle ticks in a row" to idleTicks.toString(),
-            "Games cooling down" to cooldown.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
-            "Claims attempted" to claimAttempts.entries.joinToString { "${it.key.take(8)}… at ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
-        )
+        val perSlot = slots.flatMapIndexed { i, s ->
+            val t = s.target
+            val p = if (slots.size > 1) "Channel ${i + 1}: " else ""
+            listOf(
+                "${p}Target game" to "${t.game.name} (id ${t.game.id.ifEmpty { "?" }}, slug ${t.game.slug})",
+                "${p}Channel" to "${t.stream.login} (channel ${t.stream.channelId}, broadcast ${t.stream.broadcastId}, ${t.stream.viewers} viewers, playing ${t.stream.gameName})",
+                "${p}Spade host" to android.net.Uri.parse(t.spadeUrl).host.orEmpty(),
+                "${p}Unclaimed minutes at last reading" to s.lastMinutes.toString(),
+                "${p}Minutes without credit" to s.withoutCredit.toString(),
+                "${p}Minutes on this channel" to s.onTarget.toString(),
+            )
+        }
+        return listOf("Channels" to "${slots.size} of $maxSlots") +
+            (perSlot.ifEmpty { listOf("Target game" to "none") }) +
+            listOf(
+                "Idle ticks in a row" to idleTicks.toString(),
+                "Games cooling down" to cooldown.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
+                "Claims attempted" to claimAttempts.entries.joinToString { "${it.key.take(8)}… at ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
+            )
     }
 
     suspend fun tick(): Pair<MinuteStatus, String> {
@@ -95,54 +115,103 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         DiagLog.i("miner: inventory ${campaigns.size} campaigns, $openCount open drops, $doneUnclaimed finished-unclaimed")
         claimFinished(campaigns)
 
-        // Credit check: did the game's unclaimed minutes go up since the last reading?
-        var credited = false
-        target?.let { t ->
-            val minutes = gameMinutes(campaigns, t.game)
-            if (lastMinutes >= 0 && minutes > lastMinutes) credited = true
-            DiagLog.i("miner: ${t.game.name} unclaimed minutes $lastMinutes → $minutes (${if (credited) "credited" else "no change"}), ${ticksWithoutCredit + if (credited) 0 else 1} min without credit, ${ticksOnTarget} min on ${t.stream.login}")
-            lastMinutes = minutes
-            ticksWithoutCredit = if (credited) 0 else ticksWithoutCredit + 1
-            if (ticksWithoutCredit == 3) {
-                // Is Twitch still counting towards something else (e.g. a finished campaign)?
-                val session = runCatching { api.currentDrop(t.stream.channelId) }.getOrElse { "failed: ${it.message}" }
-                DiagLog.i("miner: 3 min without credit on ${t.stream.login}; Twitch current drop session: $session")
-            }
-            val reason = when {
-                // Twitch credits in bursts, but 6 minutes without progress means this isn't counting.
-                ticksWithoutCredit >= 6 -> "no progress in 6 min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
-                // Everything for this game is earned (and it isn't just not started yet).
-                hasCampaign(campaigns, t.game) && !hasOpenDrops(campaigns, t.game) -> "all drops earned"
-                // Re-check the pick periodically: the channel may have gone offline or changed game.
-                ticksOnTarget >= 30 -> "periodic re-check"
-                else -> null
-            }
+        // Credit check per channel: did the game's unclaimed minutes go up since the last reading?
+        for (slot in slots.toList()) {
+            val reason = checkCredit(slot, campaigns)
             if (reason != null) {
-                DiagLog.i("miner: leaving ${t.stream.login} (${t.game.name}): $reason")
-                target = null
+                DiagLog.i("miner: leaving ${slot.target.stream.login} (${slot.target.game.name}): $reason")
+                slots.remove(slot)
             }
+        }
+        // Turning "two channels" off mid-session drops the second one.
+        while (slots.size > maxSlots) slots.removeAt(slots.lastIndex).also { DiagLog.i("miner: leaving ${it.target.stream.login}: two channels turned off") }
+
+        while (slots.size < maxSlots) {
+            val taken = slots.map { key(it.target.game) }.toSet()
+            val t = select(campaigns, exclude = taken) ?: break
+            slots += Slot(t, lastMinutes = gameMinutes(campaigns, t.game))
+            DiagLog.i("miner: watching ${t.stream.login} for ${t.game.name}${if (slots.size > 1) " (second channel)" else ""}")
         }
 
-        val t = target ?: select(campaigns)?.also {
-            target = it
-            lastMinutes = gameMinutes(campaigns, it.game)
-            ticksWithoutCredit = 0
-            ticksOnTarget = 0
-            DiagLog.i("miner: watching ${it.stream.login} for ${it.game.name}")
-        }
-        if (t == null) {
+        if (slots.isEmpty()) {
             now = null
+            second = null
             idleTicks++
             describe = "Nothing to mine right now"
             return MinuteStatus.Idle to "No watched or in-progress game has a live drops channel"
         }
         idleTicks = 0
-        ticksOnTarget++
 
+        val notes = mutableListOf<String>()
+        var anyCredited = false
+        var anySent = false
+        for (slot in slots.toList()) {
+            val t = slot.target
+            slot.onTarget++
+            val progress = "${t.game.name} · ${progressText(campaigns, t.game)} via ${t.stream.login}"
+            val code = try {
+                api.sendMinuteWatched(t.spadeUrl, t.stream)
+            } catch (e: Exception) {
+                slots.remove(slot)
+                notes += "Heartbeat failed: ${e.message} · $progress"
+                continue
+            }
+            if (code != 204) {
+                slots.remove(slot)
+                notes += "Heartbeat HTTP $code · $progress"
+                continue
+            }
+            anySent = true
+            if (slot.credited) anyCredited = true
+            notes += progress
+        }
+        now = slots.getOrNull(0)?.let { snapshot(it, campaigns, now) }
+        second = slots.getOrNull(1)?.let { snapshot(it, campaigns, second) }
+        describe = slots.joinToString(" + ") { "${it.target.game.name} · ${progressText(campaigns, it.target.game)}" }.ifEmpty { "Finding a channel" }
+        val note = notes.joinToString(" + ")
+        return when {
+            anyCredited -> MinuteStatus.Credited to note
+            anySent -> MinuteStatus.Sent to note
+            else -> MinuteStatus.Failed to note
+        }
+    }
+
+    /** Updates [slot]'s credit bookkeeping; returns why to leave the channel, or null to stay. */
+    private suspend fun checkCredit(slot: Slot, campaigns: List<InvCampaign>): String? {
+        val t = slot.target
+        val minutes = gameMinutes(campaigns, t.game)
+        slot.credited = slot.lastMinutes >= 0 && minutes > slot.lastMinutes
+        slot.withoutCredit = if (slot.credited) 0 else slot.withoutCredit + 1
+        DiagLog.i("miner: ${t.game.name} unclaimed minutes ${slot.lastMinutes} → $minutes (${if (slot.credited) "credited" else "no change"}), ${slot.withoutCredit} min without credit, ${slot.onTarget} min on ${t.stream.login}")
+        slot.lastMinutes = minutes
+        if (slot.withoutCredit == SESSION_CHECK_AT || slot.withoutCredit == SESSION_CHECK_AT * 2) {
+            // Is Twitch still counting towards something else, e.g. a finished drop (the 4171/30 case)?
+            val session = runCatching { api.currentDrop(t.stream.channelId) }
+            DiagLog.i("miner: ${slot.withoutCredit} min without credit on ${t.stream.login}; Twitch current drop session: ${session.getOrNull() ?: session.exceptionOrNull()?.message ?: "none"}")
+            val s = session.getOrNull()
+            val otherGame = s?.gameName?.let { !t.game.matches("", it) } == true
+            if (s != null && (s.stuck || otherGame)) {
+                cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS
+                return if (s.stuck) "Twitch session stuck on a finished drop ($s)" else "Twitch is counting another game (${s.gameName})"
+            }
+        }
+        return when {
+            // Twitch credits in bursts (sometimes 6+ minutes apart), so give it a while before giving up.
+            slot.withoutCredit >= NO_CREDIT_LIMIT -> "no progress in $NO_CREDIT_LIMIT min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
+            // Everything for this game is earned (and it isn't just not started yet).
+            hasCampaign(campaigns, t.game) && !hasOpenDrops(campaigns, t.game) -> "all drops earned"
+            // Re-check the pick periodically: the channel may have gone offline or changed game.
+            slot.onTarget >= 30 -> "periodic re-check"
+            else -> null
+        }
+    }
+
+    private fun snapshot(slot: Slot, campaigns: List<InvCampaign>, previous: MiningNow?): MiningNow {
+        val t = slot.target
         val drop = campaigns.filter { t.game.matches(it.gameId, it.gameName) }
             .flatMap { c -> openDrops(c).map { c to it } }
             .maxByOrNull { (_, d) -> d.minutes.toFloat() / d.required }
-        now = MiningNow(
+        return MiningNow(
             game = t.game.copy(id = t.game.id.ifEmpty { t.stream.gameId }),
             channel = t.stream.login,
             viewers = t.stream.viewers,
@@ -150,21 +219,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             drop = drop?.second?.name,
             minutes = drop?.second?.minutes ?: 0,
             required = drop?.second?.required ?: 0,
-            since = now?.takeIf { it.channel == t.stream.login }?.since ?: System.currentTimeMillis(),
+            since = previous?.takeIf { it.channel == t.stream.login }?.since ?: slot.since,
         )
-        val progress = "${t.game.name} · ${progressText(campaigns, t.game)} via ${t.stream.login}"
-        describe = progress
-        val code = try {
-            api.sendMinuteWatched(t.spadeUrl, t.stream)
-        } catch (e: Exception) {
-            target = null
-            return MinuteStatus.Failed to "Heartbeat failed: ${e.message} · $progress"
-        }
-        if (code != 204) {
-            target = null
-            return MinuteStatus.Failed to "Heartbeat HTTP $code · $progress"
-        }
-        return (if (credited) MinuteStatus.Credited else MinuteStatus.Sent) to progress
     }
 
     /** Is anything minable right now? Used by the background wake check; sends nothing. */
@@ -196,8 +252,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             .filter { (cooldown[key(it)] ?: 0L) < now }
     }
 
-    private suspend fun select(campaigns: List<InvCampaign>): Target? {
-        val list = candidates(campaigns)
+    private suspend fun select(campaigns: List<InvCampaign>, exclude: Set<String> = emptySet()): Target? {
+        val list = candidates(campaigns).filter { key(it) !in exclude }
         val now = System.currentTimeMillis()
         val cooling = cooldown.filterValues { it > now }.keys
         val unlinked = prefs.watchedGames.filter { it.needsLink && !hasCampaign(campaigns, it) }
@@ -281,10 +337,15 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             claimAttempts[id] = now
             val result = runCatching { api.claimDrop(id) }
             DiagLog.i("miner: claim ${c.gameName} · ${d.name} → ${result.getOrElse { it.message }}")
+            result.onSuccess { status ->
+                ClaimLog.record(ClaimEntry(System.currentTimeMillis(), c.gameName, c.gameId, c.name, d.name, d.imageUrl, status))
+            }
         }
     }
 
     companion object {
         private const val COOLDOWN_MS = 30 * 60 * 1000L
+        private const val NO_CREDIT_LIMIT = 10
+        private const val SESSION_CHECK_AT = 3
     }
 }

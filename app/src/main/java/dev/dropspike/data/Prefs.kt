@@ -8,15 +8,15 @@ import org.json.JSONObject
 import java.util.UUID
 
 /**
- * Plain app-private storage. Fine for a spike on a personal device; move the auth token
- * into Keystore-backed storage before this ships to anyone else.
+ * App-private settings. The Twitch sign-in and integrity tokens are encrypted with a
+ * Keystore key ([SecureStore]); everything else is plain.
  */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("dropspike", Context.MODE_PRIVATE)
 
     var authToken: String?
-        get() = sp.getString("auth_token", null)
-        set(v) = sp.edit { putString("auth_token", v) }
+        get() = secret("auth_token")
+        set(v) = setSecret("auth_token", v)
 
     /** Client ID the auth token was issued to (from /oauth2/validate). */
     var clientId: String
@@ -40,8 +40,8 @@ class Prefs(context: Context) {
     val sessionId: String = UUID.randomUUID().toString().replace("-", "").take(16)
 
     var integrityToken: String?
-        get() = sp.getString("integrity_token", null)
-        set(v) = sp.edit { putString("integrity_token", v) }
+        get() = secret("integrity_token")
+        set(v) = setSecret("integrity_token", v)
 
     /** Epoch millis. */
     var integrityExpiry: Long
@@ -99,6 +99,26 @@ class Prefs(context: Context) {
         get() = sp.getLong("auto_mine_paused_until", 0L)
         set(v) = sp.edit { putLong("auto_mine_paused_until", v) }
 
+    /** Watch two channels (different games) at once. Twitch may not credit both consistently. */
+    var twoChannels: Boolean
+        get() = sp.getBoolean("two_channels", false)
+        set(v) = sp.edit { putBoolean("two_channels", v) }
+
+    /** Only mine while the phone is charging. */
+    var onlyCharging: Boolean
+        get() = sp.getBoolean("only_charging", false)
+        set(v) = sp.edit { putBoolean("only_charging", v) }
+
+    /** Only mine on Wi-Fi (or Ethernet), never mobile data. */
+    var onlyWifi: Boolean
+        get() = sp.getBoolean("only_wifi", false)
+        set(v) = sp.edit { putBoolean("only_wifi", v) }
+
+    /** App theme: "system", "light" or "dark". */
+    var themeMode: String
+        get() = sp.getString("theme_mode", null) ?: "system"
+        set(v) = sp.edit { putString("theme_mode", v) }
+
     /** Material You wallpaper colours instead of the PocketDrop palette. */
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamic_color", false)
@@ -110,13 +130,35 @@ class Prefs(context: Context) {
 
     fun signOut() {
         sp.edit {
-            remove("auth_token"); remove("client_id"); remove("login"); remove("user_id")
-            remove("integrity_token"); remove("integrity_expiry")
+            remove("auth_token"); remove("auth_token_enc"); remove("client_id"); remove("login"); remove("user_id")
+            remove("integrity_token"); remove("integrity_token_enc"); remove("integrity_expiry")
         }
+        secrets.clear()
     }
 
     fun clearIntegrity() {
-        sp.edit { remove("integrity_token"); remove("integrity_expiry") }
+        sp.edit { remove("integrity_token"); remove("integrity_token_enc"); remove("integrity_expiry") }
+        secrets.remove("integrity_token")
+    }
+
+    // Secrets live encrypted under "<name>_enc". A plain value from an older version is
+    // encrypted and removed the first time it's read.
+    // Decrypted values are cached in memory: tokens are read on every API call.
+    private val secrets = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun secret(name: String): String? {
+        secrets[name]?.let { return it }
+        sp.getString("${name}_enc", null)?.let { enc -> return SecureStore.decrypt(enc)?.also { secrets[name] = it } }
+        val legacy = sp.getString(name, null) ?: return null
+        setSecret(name, legacy)
+        DiagLog.i("prefs: moved $name into encrypted storage")
+        return legacy
+    }
+
+    private fun setSecret(name: String, value: String?) = sp.edit {
+        if (value == null) { secrets.remove(name) } else { secrets[name] = value }
+        remove(name)
+        if (value == null) remove("${name}_enc") else putString("${name}_enc", SecureStore.encrypt(value))
     }
 
     private fun encodeGames(games: List<WatchedGame>) = JSONArray().apply {

@@ -53,6 +53,7 @@ import dev.dropspike.service.AutoMine
 import dev.dropspike.service.MinerService
 import dev.dropspike.service.MinerState
 import dev.dropspike.service.MinerStatus
+import dev.dropspike.service.MiningNow
 import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.twitch.InvDrop
 import dev.dropspike.twitch.WatchedGame
@@ -141,6 +142,11 @@ private fun HeroCard(status: MinerStatus, games: GamesState, perms: PermissionSt
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             when {
+                status.running && status.waiting != null -> {
+                    Pill("Paused", scheme.secondaryContainer, scheme.onSecondaryContainer, dot = StatusColors.warning)
+                    Text(status.waiting.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.headlineSmall)
+                    Hint("Your mining settings only allow mining ${if (status.waiting.contains("charger")) "while charging" else "on Wi-Fi"}. It resumes by itself.")
+                }
                 status.running && mining != null -> {
                     Pill("Mining", scheme.tertiaryContainer, scheme.onTertiaryContainer, dot = StatusColors.good)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -166,6 +172,7 @@ private fun HeroCard(status: MinerStatus, games: GamesState, perms: PermissionSt
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant,
                     )
+                    status.second?.let { second -> SecondChannel(second) }
                 }
                 status.running -> {
                     Pill("Searching", scheme.secondaryContainer, scheme.onSecondaryContainer, dot = StatusColors.warning)
@@ -232,6 +239,27 @@ private fun HeroCard(status: MinerStatus, games: GamesState, perms: PermissionSt
                         color = scheme.primary,
                         modifier = Modifier.clickable(onClick = onOpenGames).padding(4.dp),
                     )
+                }
+            }
+        }
+    }
+}
+
+/** The second channel, when "Watch two channels" is on. */
+@Composable
+private fun SecondChannel(m: MiningNow) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(shape = MaterialTheme.shapes.large, color = scheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            GameArt(m.game, 44.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Also: ${m.game.name}", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (m.drop != null && m.required > 0) {
+                    Progress(m.minutes.toFloat() / m.required)
+                    Text("${m.drop} · ${m.minutes}/${m.required} min · ${m.channel}", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    Text("Waiting for Twitch to count minutes · ${m.channel}", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
                 }
             }
         }

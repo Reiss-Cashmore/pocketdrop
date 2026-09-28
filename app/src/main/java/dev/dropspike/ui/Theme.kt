@@ -1,5 +1,7 @@
 package dev.dropspike.ui
 
+import android.app.UiModeManager
+import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -115,9 +117,28 @@ object StatusColors {
     val critical = Color(0xFFD03B3B)
 }
 
+/**
+ * Applies the theme setting ("system", "light", "dark") to the whole app on Android 12+, so the
+ * plain-View screens (sign-in) and system dialogs follow it too. Compose reads it directly.
+ */
+fun applyNightMode(context: Context, mode: String) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    context.getSystemService(UiModeManager::class.java)?.setApplicationNightMode(
+        when (mode) {
+            "light" -> UiModeManager.MODE_NIGHT_NO
+            "dark" -> UiModeManager.MODE_NIGHT_YES
+            else -> UiModeManager.MODE_NIGHT_AUTO
+        },
+    )
+}
+
 @Composable
-fun DropSpikeTheme(dynamicColor: Boolean = false, content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun DropSpikeTheme(dynamicColor: Boolean = false, themeMode: String = "system", content: @Composable () -> Unit) {
+    val dark = when (themeMode) {
+        "light" -> false
+        "dark" -> true
+        else -> isSystemInDarkTheme()
+    }
     val ctx = LocalContext.current
     val scheme: ColorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->

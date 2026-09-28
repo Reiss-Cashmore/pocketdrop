@@ -69,6 +69,8 @@ data class InvDrop(
     val instanceId: String?,
     val preconditionsMet: Boolean,
     val endsAtMs: Long,
+    /** The reward's picture (first benefit), for the rewards history. */
+    val imageUrl: String? = null,
 ) {
     val done get() = required in 1..minutes
 }
@@ -113,6 +115,23 @@ data class LiveStream(
     val gameName: String,
     val viewers: Int,
 )
+
+/** A reward on the account (Inventory gameEventDrops): everything ever earned, newest first. */
+data class Reward(
+    val id: String,
+    val name: String,
+    val gameName: String,
+    val imageUrl: String?,
+    val lastAwardedAtMs: Long,
+    val count: Int,
+)
+
+/** What Twitch is counting on a channel right now (DropCurrentSessionContext). */
+data class DropSession(val dropId: String, val minutes: Int, val required: Int, val gameName: String?) {
+    /** Past the requirement: the session is stuck on a finished drop and won't count anything else. */
+    val stuck get() = required > 0 && minutes > required
+    override fun toString() = "drop ${dropId.take(8)}…, $minutes/$required min" + (gameName?.let { ", game $it" } ?: "")
+}
 
 data class DropProgress(val campaign: String, val game: String, val drop: String, val minutes: Int, val required: Int, val claimed: Boolean)
 
@@ -243,11 +262,32 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     }
 
     /** In-progress campaigns with everything the miner needs (fields as DropForge's inventory.py). */
-    suspend fun inventoryCampaigns(): List<InvCampaign> {
+    suspend fun inventoryCampaigns(): List<InvCampaign> = inventoryJson().let(::parseCampaigns)
+
+    /** Rewards already on the account, newest first. Same (ungated) Inventory query. */
+    suspend fun rewards(): List<Reward> {
+        val inventory = inventoryJson() ?: return emptyList()
+        return (inventory.optJSONArray("gameEventDrops") ?: JSONArray()).objects().map { r ->
+            val game = r.optJSONObject("game")
+            Reward(
+                id = r.optString("id"),
+                name = r.optString("name"),
+                gameName = game?.optString("displayName")?.ifEmpty { null } ?: game?.optString("name").orEmpty(),
+                imageUrl = r.optString("imageURL").takeIf { it.startsWith("http") },
+                lastAwardedAtMs = parseTime(r.optString("lastAwardedAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
+                count = r.optInt("totalCount", 1),
+            )
+        }.sortedByDescending { it.lastAwardedAtMs }
+    }
+
+    private suspend fun inventoryJson(): JSONObject? {
         val root = gql(Queries.inventory(), useIntegrity = false)
         root.errorMessages().takeIf { it.isNotEmpty() }?.let { throw IOException("Inventory: ${it.joinToString()}") }
-        val campaigns = root.optJSONObject("data")?.optJSONObject("currentUser")
-            ?.optJSONObject("inventory")?.optJSONArray("dropCampaignsInProgress") ?: return emptyList()
+        return root.optJSONObject("data")?.optJSONObject("currentUser")?.optJSONObject("inventory")
+    }
+
+    private fun parseCampaigns(inventory: JSONObject?): List<InvCampaign> {
+        val campaigns = inventory?.optJSONArray("dropCampaignsInProgress") ?: return emptyList()
         return campaigns.objects().map { c ->
             val game = c.optJSONObject("game") ?: JSONObject()
             val allow = c.optJSONObject("allow")
@@ -273,6 +313,9 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                         instanceId = self?.optString("dropInstanceID")?.takeIf { it.isNotEmpty() && it != "null" },
                         preconditionsMet = self?.optBoolean("hasPreconditionsMet", true) ?: true,
                         endsAtMs = parseTime(d.optString("endAt")),
+                        imageUrl = (d.optJSONArray("benefitEdges") ?: JSONArray()).objects().firstNotNullOfOrNull { e ->
+                            e.optJSONObject("benefit")?.optString("imageAssetURL")?.takeIf { it.startsWith("http") }
+                        },
                     )
                 },
             )
@@ -373,13 +416,17 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
      * What Twitch considers the drop being earned right now on [channelId]
      * (DropCurrentSessionContext). Diagnostic: shows a session stuck on a finished campaign.
      */
-    suspend fun currentDrop(channelId: String): String {
+    suspend fun currentDrop(channelId: String): DropSession? {
         val root = gql(Queries.currentDrop(channelId), useIntegrity = prefs.integrityToken != null)
-        root.errorMessages().takeIf { it.isNotEmpty() }?.let { return "errors: ${it.joinToString()}" }
+        root.errorMessages().takeIf { it.isNotEmpty() }?.let { throw IOException(it.joinToString()) }
         val session = root.optJSONObject("data")?.optJSONObject("currentUser")?.optJSONObject("dropCurrentSession")
-            ?: return "no current drop session"
-        return "drop ${session.optString("dropID").take(8)}…, ${session.optInt("currentMinutesWatched")}/${session.optInt("requiredMinutesWatched")} min" +
-            (session.optJSONObject("game")?.optString("displayName")?.let { ", game $it" } ?: "")
+            ?: return null
+        return DropSession(
+            dropId = session.optString("dropID"),
+            minutes = session.optInt("currentMinutesWatched"),
+            required = session.optInt("requiredMinutesWatched"),
+            gameName = session.optJSONObject("game")?.optString("displayName")?.ifEmpty { null },
+        )
     }
 
     /** Claims a finished drop (DropsPage_ClaimDropRewards, integrity-gated). Returns Twitch's status. */

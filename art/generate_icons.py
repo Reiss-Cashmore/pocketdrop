@@ -50,8 +50,6 @@ def star(cx,cy,r):
             f"C{cx-k*0.4},{cy+k} {cx-k},{cy+k*0.4} {cx-r},{cy} "
             f"C{cx-k},{cy-k*0.4} {cx-k*0.4},{cy-k} {cx},{cy-r} Z")
 SPARKS=[star(76,23,6),star(22,30,4),star(80,35,2.8)]
-MOTION="M30,14 L30,24 M66,32 L66,38 M25,42 L25,40"
-MOTION="M32.5,18 L32.5,27 M63.5,18 L63.5,25"
 RIVETS="M22.5,49 m-2.2,0 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 M73.5,49 m-2.2,0 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0"
 
 BG=["#8B5CF6","#3B1A96"]
@@ -74,7 +72,6 @@ svg=f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" h
   <path d="{" ".join(SPARKS)}" fill="#FFFFFF" fill-opacity="0.9"/>
   <path d="{DROP}" fill="url(#drop)"/>
   <path d="{DROP_SHINE}" fill="none" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="2.6" stroke-linecap="round"/>
-  <path d="{MOTION}" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="2.6" stroke-linecap="round"/>
   <path d="{POCKET}" fill="{POCKETC}"/>
   <path d="{RIM}" fill="{RIMC}"/>
   <path d="{STITCH}" fill="none" stroke="{STITCHC}" stroke-width="1.6" stroke-linecap="round"/>
@@ -108,13 +105,11 @@ def vd(size_dp, vp, group_open, group_close, with_bg, mono=False):
         out.append(f'    <path android:fillColor="{W}" android:pathData="{" ".join(SPARKS)}" />')
         out.append(f'    <path android:fillColor="{W}" android:pathData="{DROP}" />')
         # Gap between drop and pocket so the shapes read apart in one colour.
-        out.append(f'    <path android:strokeColor="{W}" android:strokeWidth="2.6" android:strokeLineCap="round" android:pathData="{MOTION}" />')
         out.append(f'    <path android:fillColor="{W}" android:pathData="{POCKET}" />')
     else:
         out.append(f'    <path android:fillColor="#E6FFFFFF" android:pathData="{" ".join(SPARKS)}" />')
         out.append(f'    <path android:pathData="{DROP}">{grad(DROPC,40,14,58,55)}\n    </path>')
         out.append(f'    <path android:strokeColor="#BFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:pathData="{DROP_SHINE}" />')
-        out.append(f'    <path android:strokeColor="#8CFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:pathData="{MOTION}" />')
         out.append(f'    <path android:fillColor="#FF{POCKETC[1:]}" android:pathData="{POCKET}" />')
         out.append(f'    <path android:fillColor="#FF{RIMC[1:]}" android:pathData="{RIM}" />')
         out.append(f'    <path android:strokeColor="#FF{STITCHC[1:]}" android:strokeWidth="1.6" android:strokeLineCap="round" android:pathData="{STITCH}" />')

@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import dev.dropspike.DropSpikeApp
+import dev.dropspike.data.Conditions
 import dev.dropspike.data.DiagLog
 import dev.dropspike.data.Prefs
 import dev.dropspike.data.SystemInfo
@@ -41,6 +42,10 @@ object AutoMine {
     suspend fun check(context: Context, trigger: String) {
         val prefs = DropSpikeApp.instance.prefs
         if (!prefs.autoMine || prefs.authToken == null || MinerState.status.value.running) return
+        Conditions.blocked(context, prefs)?.let {
+            DiagLog.i("auto mine: skipped ($trigger), $it")
+            return
+        }
         if (paused(prefs)) {
             DiagLog.i("auto mine: skipped ($trigger), paused after Stop until ${SystemInfo.time(prefs.autoMinePausedUntil)}")
             return

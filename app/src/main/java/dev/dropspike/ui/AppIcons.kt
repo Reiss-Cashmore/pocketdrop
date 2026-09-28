@@ -2,13 +2,28 @@ package dev.dropspike.ui
 
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 
 /**
  * The few Material icons we need that aren't in material-icons-core (the extended set would
  * add megabytes to an unminified APK). Paths are from Material Icons (Apache 2.0).
  */
 object AppIcons {
+    private fun svg(name: String, d: String) = materialIcon(name = name) {
+        addPath(pathData = addPathNodes(d), fill = SolidColor(Color.Black))
+    }
+
+    val Wifi: ImageVector by lazy {
+        svg("App.Wifi", "M1,9l2,2c4.97,-4.97 13.03,-4.97 18,0l2,-2C16.93,2.93 7.08,2.93 1,9zM9,17l3,3 3,-3c-1.65,-1.66 -4.34,-1.66 -6,0zM5,13l2,2c2.76,-2.76 7.24,-2.76 10,0l2,-2C15.14,9.14 8.87,9.14 5,13z")
+    }
+
+    val Trophy: ImageVector by lazy {
+        svg("App.Trophy", "M19,5h-2V3H7v2H5C3.9,5 3,5.9 3,7v1c0,2.55 1.92,4.63 4.39,4.94c0.63,1.5 1.98,2.63 3.61,2.96V19H7v2h10v-2h-4v-3.1c1.63,-0.33 2.98,-1.46 3.61,-2.96C19.08,12.63 21,10.55 21,8V7C21,5.9 20.1,5 19,5zM5,8V7h2v3.82C5.84,10.4 5,9.3 5,8zM19,8c0,1.3 -0.84,2.4 -2,2.82V7h2V8z")
+    }
+
     val Stop: ImageVector by lazy {
         materialIcon(name = "App.Stop") { materialPath { moveTo(6f, 6f); horizontalLineToRelative(12f); verticalLineToRelative(12f); horizontalLineTo(6f); close() } }
     }

@@ -26,6 +26,19 @@ object SystemInfo {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).let { "${it.versionName} (${it.longVersionCode})" } }
             .getOrDefault("?")
 
+    /** True when the installed app is signed with the public throwaway key from the repo. */
+    fun signedWithPublicKey(context: Context): Boolean = runCatching {
+        val info = context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
+        val certs = info.signingInfo?.apkContentsSigners.orEmpty()
+        certs.any { cert ->
+            java.security.MessageDigest.getInstance("SHA-256").digest(cert.toByteArray())
+                .joinToString("") { "%02X".format(it) } == PUBLIC_KEY_SHA256
+        }
+    }.getOrDefault(false)
+
+    // keystore/spike.jks
+    private const val PUBLIC_KEY_SHA256 = "C6D0D2605B6F45E426DC4EFDAC4B95824831A6EBBFEFE8627B8E292D2DEFE4AB"
+
     fun device(): String =
         "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}), build ${Build.DISPLAY}"
 

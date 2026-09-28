@@ -19,14 +19,25 @@ android {
     signingConfigs {
         // A fixed, throwaway key committed to the repo so every build (local or CI)
         // is signed identically and installs as an update over the previous one.
-        // Replace with a private key before distributing to anyone else.
         create("spike") {
             storeFile = rootProject.file("keystore/spike.jks")
             storePassword = "dropspike"
             keyAlias = "spike"
             keyPassword = "dropspike"
         }
+        // Your private key, when the build provides one (CI decodes the SIGNING_KEYSTORE_B64
+        // secret to a file; see README "Signing"). Falls back to the throwaway key otherwise.
+        val privateStore = System.getenv("SIGNING_STORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+        if (privateStore != null) {
+            create("private") {
+                storeFile = privateStore
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: System.getenv("SIGNING_STORE_PASSWORD")
+            }
+        }
     }
+    val releaseSigning = signingConfigs.findByName("private") ?: signingConfigs.getByName("spike")
 
     buildTypes {
         debug {
@@ -34,7 +45,7 @@ android {
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("spike")
+            signingConfig = releaseSigning
         }
     }
 
@@ -47,6 +58,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     lint {
         // Sideloaded spike: don't let Play-Store policy checks (e.g. ExpiredTargetSdkVersion) fail CI.

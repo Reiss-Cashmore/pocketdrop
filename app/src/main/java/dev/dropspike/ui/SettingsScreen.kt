@@ -1,7 +1,15 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package dev.dropspike.ui
 
 import android.os.Build
 import androidx.compose.foundation.background
+import androidx.compose.runtime.remember
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +26,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,11 +47,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.dropspike.data.Prefs
 import dev.dropspike.data.SystemInfo
 
+private val THEMES = listOf("system" to "System", "light" to "Light", "dark" to "Dark")
+
 @Composable
 fun SettingsScreen(vm: MainViewModel) {
     val account by vm.account.collectAsStateWithLifecycle()
     val dynamic by vm.dynamicColor.collectAsStateWithLifecycle()
     val integrity by vm.integrity.collectAsStateWithLifecycle()
+    val mining by vm.mining.collectAsStateWithLifecycle()
+    val themeMode by vm.themeMode.collectAsStateWithLifecycle()
     val perms = rememberPermissionState()
     val context = LocalContext.current
     var advanced by rememberSaveable { mutableStateOf(false) }
@@ -93,9 +106,34 @@ fun SettingsScreen(vm: MainViewModel) {
                 }
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            item {
-                Section("Appearance", icon = Icons.Default.Star) {
+        item {
+            Section("Mining", "When and how PocketDrop watches", icon = AppIcons.Drop) {
+                SettingRow("Only while charging", "Pause mining when the phone is unplugged", icon = AppIcons.Bolt) {
+                    Switch(checked = mining.onlyCharging, onCheckedChange = vm::setOnlyCharging)
+                }
+                SettingRow("Only on Wi-Fi", "Pause mining on mobile data (it uses very little: no video is streamed)", icon = AppIcons.Wifi) {
+                    Switch(checked = mining.onlyWifi, onCheckedChange = vm::setOnlyWifi)
+                }
+                SettingRow("Watch two channels", "Mine two games at once, like a second browser tab", icon = AppIcons.Gamepad) {
+                    Switch(checked = mining.twoChannels, onCheckedChange = vm::setTwoChannels)
+                }
+                if (mining.twoChannels) {
+                    StatusLine(false, "Experimental: Twitch may not credit both channels every minute, and sometimes credits only one. Check the uptime chart; turn this off if progress slows.")
+                }
+            }
+        }
+        item {
+            Section("Appearance", icon = Icons.Default.Star) {
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    THEMES.forEachIndexed { i, (mode, label) ->
+                        SegmentedButton(
+                            selected = themeMode == mode,
+                            onClick = { vm.setThemeMode(mode) },
+                            shape = SegmentedButtonDefaults.itemShape(i, THEMES.size),
+                        ) { Text(label) }
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     SettingRow("Wallpaper colours", "Use Material You colours instead of PocketDrop purple") {
                         Switch(checked = dynamic, onCheckedChange = vm::setDynamicColor)
                     }
@@ -117,6 +155,17 @@ fun SettingsScreen(vm: MainViewModel) {
         if (advanced) {
             item { IntegrityCard(vm) }
             item { GateCard(vm) }
+        }
+        item {
+            Section("Security", icon = Icons.Default.Lock) {
+                SettingRow("Sign-in", "Your Twitch tokens are encrypted with a key held in Android's secure hardware", icon = Icons.Default.Lock)
+                val publicKey = remember { SystemInfo.signedWithPublicKey(context) }
+                if (publicKey) {
+                    StatusLine(false, "This build is signed with the public test key from the repo. Anyone could publish an update that installs over it. Add a private key (README, Signing).")
+                } else {
+                    StatusLine(true, "Signed with your private key")
+                }
+            }
         }
         item {
             Section("About", icon = Icons.Default.Info) {

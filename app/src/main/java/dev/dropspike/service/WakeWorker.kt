@@ -15,6 +15,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.R
+import dev.dropspike.data.Conditions
 import dev.dropspike.data.DiagLog
 import dev.dropspike.data.SystemInfo
 import java.text.DateFormat
@@ -38,6 +39,11 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             .forEach { (k, v) -> DiagLog.i("wake: $k = $v") }
         if (prefs.authToken == null) {
             DiagLog.i("wake: not signed in, skipping")
+            return Result.success()
+        }
+        Conditions.blocked(applicationContext, prefs)?.let {
+            DiagLog.i("wake: $it, skipping")
+            prefs.lastWakeCheck = "$stamp · $it"
             return Result.success()
         }
         if (MinerState.status.value.running) {
@@ -111,17 +117,23 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
         /** (Re)schedule for the saved interval, or cancel when it is 0. */
         fun schedule(context: Context) {
-            val minutes = DropSpikeApp.instance.prefs.wakeIntervalMin
+            val prefs = DropSpikeApp.instance.prefs
+            val minutes = prefs.wakeIntervalMin
             val wm = WorkManager.getInstance(context)
             if (minutes <= 0) {
                 wm.cancelUniqueWork(NAME)
                 return
             }
             val request = PeriodicWorkRequestBuilder<WakeWorker>(minutes.toLong(), TimeUnit.MINUTES)
-                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(if (prefs.onlyWifi) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                        .setRequiresCharging(prefs.onlyCharging)
+                        .build(),
+                )
                 .build()
             wm.enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.UPDATE, request)
-            DiagLog.i("wake: scheduled every $minutes min")
+            DiagLog.i("wake: scheduled every $minutes min${if (prefs.onlyCharging) ", only while charging" else ""}${if (prefs.onlyWifi) ", only on Wi-Fi" else ""}")
         }
     }
 }
