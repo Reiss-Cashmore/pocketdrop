@@ -87,3 +87,18 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
 }
+
+// AGP 9.4's bundled lint depends on libraries with published advisories (found by the OSV scan
+// in CI). They never reach the APK and lint only runs on demand, but lift them to patched
+// versions so the build tooling isn't vulnerable either. Drop once AGP ships newer ones.
+dependencies {
+    constraints {
+        listOf(
+            libs.bouncycastle.bcprov,
+            libs.bouncycastle.bcpkix,
+            libs.bouncycastle.bcutil,
+            libs.apache.httpclient,
+            libs.commons.lang3,
+        ).forEach { add("androidLintTool", it) }
+    }
+}
