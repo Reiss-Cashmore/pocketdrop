@@ -54,6 +54,7 @@ class IntegrityMinter(private val webView: WebView) {
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun mint(
         page: MintPage,
+        siteUrl: String,
         authToken: String,
         headers: Map<String, String>,
         deviceId: String,
@@ -67,7 +68,7 @@ class IntegrityMinter(private val webView: WebView) {
         cookies.setAcceptCookie(true)
         cookies.setAcceptThirdPartyCookies(webView, true)
         // Same as DropForge's Network.setCookie: the page must be signed in as this token's user.
-        cookies.setCookie("https://www.twitch.tv", "auth-token=$authToken; Domain=.twitch.tv; Path=/; Secure")
+        cookies.setCookie(siteUrl, "auth-token=$authToken; Domain=.twitch.tv; Path=/; Secure")
         cookies.flush()
 
         val loaded = CompletableDeferred<Unit>()
@@ -84,11 +85,11 @@ class IntegrityMinter(private val webView: WebView) {
 
         when (page) {
             MintPage.Light -> webView.loadDataWithBaseURL(
-                "https://www.twitch.tv/",
+                "$siteUrl/",
                 "<!doctype html><html><head><meta name=viewport content='width=device-width'></head><body></body></html>",
                 "text/html", "utf-8", null,
             )
-            MintPage.Full -> webView.loadUrl("https://www.twitch.tv/")
+            MintPage.Full -> webView.loadUrl("$siteUrl/")
         }
         loaded.await()
         // DropForge waits 5s after navigating so the site's own scripts settle.

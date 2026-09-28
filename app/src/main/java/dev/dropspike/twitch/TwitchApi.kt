@@ -27,6 +27,12 @@ enum class DeviceClient(val label: String, val clientId: String) {
     SmartTv("Smart TV", "ue6666qo983tsx6so1t0vnawi233wa"),
 }
 
+/** Which Twitch site the GQL request claims to come from (Origin/Referer). */
+enum class ApiOrigin(val label: String, val url: String) {
+    Www("www", "https://www.twitch.tv"),
+    Mobile("m.", "https://m.twitch.tv"),
+}
+
 data class DeviceCode(
     val client: DeviceClient,
     val deviceCode: String,
@@ -112,8 +118,12 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         }
     }
 
-    suspend fun dashboard(useIntegrity: Boolean): DashboardResult {
-        val root = gql(Queries.dashboard(), useIntegrity)
+    /** The site that matches the signed-in client: m.twitch.tv for mobile-web tokens. */
+    fun defaultOrigin(): ApiOrigin =
+        if (prefs.clientId == DeviceClient.MobileWeb.clientId) ApiOrigin.Mobile else ApiOrigin.Www
+
+    suspend fun dashboard(useIntegrity: Boolean, origin: ApiOrigin = defaultOrigin()): DashboardResult {
+        val root = gql(Queries.dashboard(), useIntegrity, origin)
         val errors = root.errorMessages()
         val arr = root.optJSONObject("data")?.optJSONObject("currentUser")?.optJSONArray("dropCampaigns")
             ?: return DashboardResult(null, errors)
@@ -151,7 +161,11 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         }
     }
 
-    private suspend fun gql(body: JSONObject, useIntegrity: Boolean): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun gql(
+        body: JSONObject,
+        useIntegrity: Boolean,
+        origin: ApiOrigin = defaultOrigin(),
+    ): JSONObject = withContext(Dispatchers.IO) {
         val token = prefs.authToken ?: throw IOException("Not signed in")
         val builder = Request.Builder()
             .url("https://gql.twitch.tv/gql")
@@ -163,8 +177,8 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             .header("Accept", "*/*")
             .header("Accept-Language", "en-US")
             .header("User-Agent", userAgent)
-            .header("Origin", "https://www.twitch.tv")
-            .header("Referer", "https://www.twitch.tv/")
+            .header("Origin", origin.url)
+            .header("Referer", "${origin.url}/")
         if (useIntegrity) {
             val integrity = prefs.integrityToken ?: throw IOException("No integrity token; mint one first")
             builder.header("Client-Integrity", integrity)
@@ -175,7 +189,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         for (attempt in 0..1) {
             root = http.newCall(request).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) throw IOException("GQL HTTP ${resp.code}: ${text.take(200)}")
+                if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}: ${text.take(300)}")
                 JSONObject(text)
             }
             if (attempt == 0 && root.errorMessages().contains("PersistedQueryNotFound")) delay(1_000) else break

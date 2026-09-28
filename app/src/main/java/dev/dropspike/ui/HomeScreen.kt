@@ -57,6 +57,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,7 +84,6 @@ import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
 import dev.dropspike.service.MinerService
 import dev.dropspike.service.MinerState
-import dev.dropspike.twitch.DashboardResult
 import dev.dropspike.twitch.DeviceClient
 import dev.dropspike.twitch.MintPage
 import dev.dropspike.twitch.MintSurface
@@ -124,6 +124,7 @@ fun HomeScreen(vm: MainViewModel) {
                 item { BackgroundCard(vm) }
                 item { LogCard() }
             }
+            MintOverlay(vm, Modifier.align(Alignment.BottomCenter))
         }
     }
 }
@@ -330,22 +331,33 @@ private fun IntegrityCard(vm: MainViewModel) {
             else -> StatusLine(null, "No token yet")
         }
 
-        // On-screen mint: the WebView is part of the layout while it works.
-        val pending = state.pendingVisibleMint
-        if (pending != null) {
-            var webView by remember(pending) { mutableStateOf<WebView?>(null) }
-            AndroidView(
-                modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(12.dp)),
-                factory = { ctx -> WebView(ctx).also { webView = it } },
-                onRelease = { it.destroy() },
-            )
-            LaunchedEffect(pending, webView) {
-                webView?.let { vm.runMint(it) }
-            }
-        }
-
         Buttons {
             FilledTonalButton(onClick = vm::mint, enabled = !state.busy) { Text("Mint token") }
+        }
+    }
+}
+
+/**
+ * On-screen mint WebView, drawn over the list rather than inside it so scrolling or
+ * recomposing the list can't tear it down mid-mint. The view model does the minting.
+ */
+@Composable
+private fun MintOverlay(vm: MainViewModel, modifier: Modifier) {
+    val state by vm.integrity.collectAsStateWithLifecycle()
+    val pending = state.pendingVisibleMint ?: return
+    ElevatedCard(modifier.widthIn(max = 720.dp).fillMaxWidth().padding(16.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Running Twitch's security check…", style = MaterialTheme.typography.titleSmall)
+            key(pending) {
+                AndroidView(
+                    modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(12.dp)),
+                    factory = { ctx ->
+                        WebView(ctx).apply { setBackgroundColor(android.graphics.Color.WHITE) }
+                            .also(vm::attachMintHost)
+                    },
+                    onRelease = { it.destroy() },
+                )
+            }
         }
     }
 }
@@ -357,10 +369,10 @@ private fun GateCard(vm: MainViewModel) {
     val state by vm.gate.collectAsStateWithLifecycle()
 
     Section(3, "Campaign gate test") {
-        Hint("Requests the drops dashboard twice. Since Sep 18 Twitch returns null without a valid integrity token. A campaign list on the second row means the approach works.")
-        GateRow("Without token", state.without, state.withoutError, expectOk = false)
-        GateRow("With token", state.with, state.withError, expectOk = true)
-        state.with?.campaigns?.takeIf { it.isNotEmpty() }?.let { campaigns ->
+        Hint("Checks that the account works at all (inventory), then asks for the campaign list without and with the integrity token, claiming to be www.twitch.tv and m.twitch.tv. Any \"With token\" row listing campaigns means the approach works.")
+        if (state.rows.isEmpty()) StatusLine(null, "Not run yet")
+        state.rows.forEach { StatusLine(it.ok, "${it.label}: ${it.text}") }
+        state.campaigns?.takeIf { it.isNotEmpty() }?.let { campaigns ->
             HorizontalDivider()
             campaigns.sortedBy { it.game }.take(12).forEach {
                 Text("${it.game} · ${it.name}", style = MaterialTheme.typography.bodySmall)
@@ -372,22 +384,6 @@ private fun GateCard(vm: MainViewModel) {
             OutlinedButton(onClick = { vm.inventoryOnce() }) { Text("Log inventory") }
         }
     }
-}
-
-@Composable
-private fun GateRow(label: String, result: DashboardResult?, error: String?, expectOk: Boolean) {
-    val text = when {
-        error != null -> "$label: $error"
-        result == null -> "$label: not run"
-        else -> "$label: ${MainViewModel.describe(result)}"
-    }
-    val ok = when {
-        result == null && error == null -> null
-        expectOk -> result?.campaigns != null
-        // Without a token, "null" is the expected (gated) answer; a list means the gate is gone.
-        else -> null
-    }
-    StatusLine(ok, text)
 }
 
 // ---- 4. Background ------------------------------------------------------------------------

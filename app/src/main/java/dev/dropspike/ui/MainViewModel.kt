@@ -7,7 +7,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
+import dev.dropspike.twitch.ApiOrigin
 import dev.dropspike.twitch.BrowserProbe
+import dev.dropspike.twitch.Campaign
 import dev.dropspike.twitch.DashboardResult
 import dev.dropspike.twitch.DeviceClient
 import dev.dropspike.twitch.DeviceCode
@@ -16,6 +18,7 @@ import dev.dropspike.twitch.IntegrityToken
 import dev.dropspike.twitch.MintPage
 import dev.dropspike.twitch.MintSurface
 import dev.dropspike.twitch.Queries
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class AccountState(val login: String? = null, val clientId: String? = null, val busy: Boolean = false, val error: String? = null)
 
@@ -42,12 +46,13 @@ data class IntegrityState(
     val error: String? = null,
 )
 
+/** One request in the gate test. [ok]: true = pass, false = fail, null = informational. */
+data class GateResult(val label: String, val ok: Boolean?, val text: String)
+
 data class GateState(
     val busy: Boolean = false,
-    val without: DashboardResult? = null,
-    val with: DashboardResult? = null,
-    val withoutError: String? = null,
-    val withError: String? = null,
+    val rows: List<GateResult> = emptyList(),
+    val campaigns: List<Campaign>? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -64,6 +69,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ),
     )
     val integrity: StateFlow<IntegrityState> = _integrity
+
+    private var mintHost: CompletableDeferred<WebView>? = null
+
+    /** Called by the screen once the on-screen mint WebView exists. */
+    fun attachMintHost(view: WebView) {
+        mintHost?.complete(view)
+    }
 
     private val _deviceLogin = MutableStateFlow(DeviceLoginState())
     val deviceLogin: StateFlow<DeviceLoginState> = _deviceLogin
@@ -145,8 +157,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         _integrity.update { it.copy(busy = true, error = null) }
         when (_integrity.value.surface) {
-            // The screen adds a WebView to the layout and calls runMint with it.
-            MintSurface.Visible -> _integrity.update { it.copy(pendingVisibleMint = System.nanoTime()) }
+            // The screen shows a WebView and hands it over via attachMintHost; the mint itself
+            // runs here, so recomposition can't cancel it.
+            MintSurface.Visible -> {
+                val host = CompletableDeferred<WebView>().also { mintHost = it }
+                _integrity.update { it.copy(pendingVisibleMint = System.nanoTime()) }
+                viewModelScope.launch {
+                    val view = withTimeoutOrNull(10_000) { host.await() }
+                    if (view == null) {
+                        _integrity.update { it.copy(busy = false, pendingVisibleMint = null, error = "WebView never appeared") }
+                    } else {
+                        runMint(view)
+                    }
+                }
+            }
             MintSurface.Offscreen -> viewModelScope.launch {
                 val view = WebView(getApplication<Application>())
                 // Never attached to a window; give it a phone-sized layout so the page has a viewport.
@@ -164,7 +188,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Runs on the main thread with a WebView supplied by the screen or by [mint]. */
     suspend fun runMint(view: WebView) {
         val state = _integrity.value
-        DiagLog.i("mint: start (${state.page.label}, ${state.surface.label})")
+        val site = api.defaultOrigin().url
+        DiagLog.i("mint: start (${state.page.label}, ${state.surface.label}, $site, client ${prefs.clientId})")
         val token = prefs.authToken ?: run {
             _integrity.update { it.copy(busy = false, pendingVisibleMint = null, error = "Sign in first") }
             return
@@ -177,6 +202,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val result = runCatching {
             IntegrityMinter(view).mint(
                 page = state.page,
+                siteUrl = site,
                 authToken = token,
                 headers = headers,
                 deviceId = prefs.deviceId,
@@ -199,24 +225,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The go/no-go test: does the campaign dashboard come back with an integrity token and not without? */
+    /**
+     * The go/no-go test, as a matrix so one run explains a failure: an ungated call (auth works
+     * at all?), then the dashboard without/with the integrity token, claiming each site origin.
+     */
     fun runGateTest() = viewModelScope.launch {
         _gate.value = GateState(busy = true)
-        val without = runCatching { api.dashboard(useIntegrity = false) }
-        without.getOrNull()?.let { DiagLog.i("gate: without token → ${describe(it)}") }
-        without.exceptionOrNull()?.let { DiagLog.i("gate: without token failed: ${it.message}") }
+        val rows = mutableListOf<GateResult>()
+        var campaigns: List<Campaign>? = null
 
-        val withToken = if (prefs.integrityToken != null) runCatching { api.dashboard(useIntegrity = true) } else null
-        withToken?.getOrNull()?.let { DiagLog.i("gate: with token → ${describe(it)}") }
-        withToken?.exceptionOrNull()?.let { DiagLog.i("gate: with token failed: ${it.message}") }
-
-        _gate.value = GateState(
-            busy = false,
-            without = without.getOrNull(),
-            withoutError = without.exceptionOrNull()?.message,
-            with = withToken?.getOrNull(),
-            withError = withToken?.exceptionOrNull()?.message ?: if (withToken == null) "No integrity token minted" else null,
+        val inv = runCatching { api.inventory() }
+        rows += GateResult(
+            "Inventory (not gated)",
+            inv.isSuccess,
+            inv.fold({ "OK, ${it.size} drops" }, { it.message ?: it.toString() }),
         )
+
+        val combos = buildList {
+            ApiOrigin.entries.forEach { add(false to it) }
+            if (prefs.integrityToken != null) ApiOrigin.entries.forEach { add(true to it) }
+        }
+        for ((useIntegrity, origin) in combos) {
+            val label = "${if (useIntegrity) "With" else "Without"} token, ${origin.label}"
+            val r = runCatching { api.dashboard(useIntegrity, origin) }
+            val row = r.fold(
+                { res ->
+                    if (res.campaigns != null && campaigns == null) campaigns = res.campaigns
+                    // Without a token "null" is the expected gated answer, so it isn't a failure.
+                    GateResult(label, if (res.campaigns != null) true else if (useIntegrity) false else null, describe(res))
+                },
+                { GateResult(label, false, it.message ?: it.toString()) },
+            )
+            rows += row
+            DiagLog.i("gate: $label → ${row.text}")
+            _gate.value = GateState(busy = true, rows = rows.toList(), campaigns = campaigns)
+        }
+        if (prefs.integrityToken == null) rows += GateResult("With token", null, "No integrity token minted")
+        DiagLog.i("gate: client ${prefs.clientId}, inventory → ${rows.first().text}")
+        _gate.value = GateState(busy = false, rows = rows.toList(), campaigns = campaigns)
     }
 
     fun inventoryOnce() = viewModelScope.launch {
