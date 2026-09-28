@@ -4,6 +4,7 @@ import android.content.Context
 import dev.dropspike.data.DiagLog
 import dev.dropspike.data.MinuteStatus
 import dev.dropspike.data.Prefs
+import dev.dropspike.data.SystemInfo
 import dev.dropspike.twitch.IntegrityRenewer
 import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.twitch.LiveStream
@@ -45,12 +46,32 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     var describe: String = "Starting"
         private set
 
+    /** Internal state, for the report. */
+    fun detail(): List<Pair<String, String>> {
+        val now = System.currentTimeMillis()
+        val t = target
+        return listOf(
+            "Target game" to (t?.game?.let { "${it.name} (id ${it.id.ifEmpty { "?" }}, slug ${it.slug})" } ?: "none"),
+            "Channel" to (t?.stream?.let { "${it.login} (channel ${it.channelId}, broadcast ${it.broadcastId}, ${it.viewers} viewers, playing ${it.gameName})" } ?: "none"),
+            "Spade host" to (t?.spadeUrl?.let { android.net.Uri.parse(it).host.orEmpty() } ?: "none"),
+            "Unclaimed minutes at last reading" to lastMinutes.toString(),
+            "Minutes without credit" to ticksWithoutCredit.toString(),
+            "Minutes on this channel" to ticksOnTarget.toString(),
+            "Idle ticks in a row" to idleTicks.toString(),
+            "Games cooling down" to cooldown.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
+            "Claims attempted" to claimAttempts.entries.joinToString { "${it.key.take(8)}… at ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
+        )
+    }
+
     suspend fun tick(): Pair<MinuteStatus, String> {
         val campaigns = try {
             api.inventoryCampaigns()
         } catch (e: Exception) {
             return MinuteStatus.Failed to "Inventory failed: ${e.message}"
         }
+        val openCount = campaigns.sumOf { openDrops(it).size }
+        val doneUnclaimed = campaigns.sumOf { c -> c.drops.count { it.done && !it.claimed } }
+        DiagLog.i("miner: inventory ${campaigns.size} campaigns, $openCount open drops, $doneUnclaimed finished-unclaimed")
         claimFinished(campaigns)
 
         // Credit check: did the game's unclaimed minutes go up since the last reading?
@@ -58,6 +79,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         target?.let { t ->
             val minutes = gameMinutes(campaigns, t.game)
             if (lastMinutes >= 0 && minutes > lastMinutes) credited = true
+            DiagLog.i("miner: ${t.game.name} unclaimed minutes $lastMinutes → $minutes (${if (credited) "credited" else "no change"}), ${ticksWithoutCredit + if (credited) 0 else 1} min without credit, ${ticksOnTarget} min on ${t.stream.login}")
             lastMinutes = minutes
             ticksWithoutCredit = if (credited) 0 else ticksWithoutCredit + 1
             val reason = when {
@@ -133,15 +155,28 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     }
 
     private suspend fun select(campaigns: List<InvCampaign>): Target? {
-        for (game in candidates(campaigns)) {
+        val list = candidates(campaigns)
+        val now = System.currentTimeMillis()
+        val cooling = cooldown.filterValues { it > now }.keys
+        DiagLog.i(
+            "miner: choosing from ${list.size} candidate game(s): ${list.joinToString { it.name }.ifEmpty { "none" }}" +
+                (if (cooling.isNotEmpty()) " · cooling down: ${cooling.joinToString()}" else "") +
+                " · watched=${prefs.watchedGames.size}, onlyWatched=${prefs.onlyWatched}",
+        )
+        for (game in list) {
             val stream = runCatching { findStream(game, campaigns) }.getOrElse {
                 DiagLog.i("miner: channel search for ${game.name} failed: ${it.message}")
                 null
+            } ?: run {
+                DiagLog.i("miner: ${game.name}: no live drops-enabled channel")
+                null
             } ?: continue
+            DiagLog.i("miner: ${game.name}: picked ${stream.login} (${stream.viewers} viewers, broadcast ${stream.broadcastId}, playing ${stream.gameName})")
             val spade = runCatching { api.spadeUrl(stream.login) }.getOrElse {
                 DiagLog.i("miner: spade URL for ${stream.login} failed: ${it.message}")
                 null
             } ?: continue
+            DiagLog.i("miner: ${stream.login}: spade endpoint ${android.net.Uri.parse(spade).host}")
             return Target(game, stream, spade)
         }
         return null
@@ -152,13 +187,18 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val acl = campaigns.filter { game.matches(it.gameId, it.gameName) && openDrops(it).isNotEmpty() }
             .flatMap { it.allowedLogins }.distinct()
         if (acl.isNotEmpty()) {
+            DiagLog.i("miner: ${game.name}: campaign restricted to ${acl.size} channel(s), checking ${acl.take(15).joinToString()}")
             for (login in acl.take(15)) {
-                val s = runCatching { api.streamInfo(login) }.getOrNull() ?: continue
+                val s = runCatching { api.streamInfo(login) }.getOrNull()
+                if (s == null) continue
                 if (game.matches(s.gameId, s.gameName)) return s
+                DiagLog.i("miner: ${game.name}: $login is live but playing ${s.gameName}")
             }
             return null
         }
-        return api.liveStreams(game).firstOrNull()
+        val streams = api.liveStreams(game)
+        DiagLog.i("miner: ${game.name} (slug ${game.slug}): ${streams.size} live drops-enabled channel(s)${streams.take(3).joinToString(prefix = if (streams.isEmpty()) "" else ": ") { "${it.login}/${it.viewers}" }}")
+        return streams.firstOrNull()
     }
 
     private fun openDrops(c: InvCampaign) = c.drops.filter {
@@ -187,6 +227,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val finished = campaigns.flatMap { c -> c.drops.filter { it.done && !it.claimed && it.instanceId != null }.map { c to it } }
             .filter { (_, d) -> now - (claimAttempts[d.instanceId] ?: 0L) > COOLDOWN_MS }
         if (finished.isEmpty()) return
+        DiagLog.i("miner: ${finished.size} finished drop(s) to claim: ${finished.joinToString { (c, d) -> "${c.gameName} · ${d.name}" }}")
         if (!IntegrityRenewer.ensureFresh(context, prefs, api.defaultOrigin().url)) {
             DiagLog.i("miner: ${finished.size} drop(s) ready to claim, but no integrity token")
             return

@@ -3,6 +3,7 @@ package dev.dropspike.service
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.Constraints
@@ -15,6 +16,7 @@ import androidx.work.WorkerParameters
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.R
 import dev.dropspike.data.DiagLog
+import dev.dropspike.data.SystemInfo
 import java.text.DateFormat
 import java.util.Date
 import java.util.concurrent.TimeUnit
@@ -30,13 +32,23 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val app = DropSpikeApp.instance
         val prefs = app.prefs
         val stamp = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())
-        if (prefs.authToken == null) return Result.success()
+        DiagLog.i("wake: check started (attempt $runAttemptCount, every ${prefs.wakeIntervalMin} min, id ${id.toString().take(8)})")
+        SystemInfo.power(applicationContext).filter { it.first.startsWith("Battery") || it.first.startsWith("App standby") || it.first.startsWith("Device idle") }
+            .forEach { (k, v) -> DiagLog.i("wake: $k = $v") }
+        if (prefs.authToken == null) {
+            DiagLog.i("wake: not signed in, skipping")
+            return Result.success()
+        }
         if (MinerState.status.value.running) {
+            DiagLog.i("wake: already mining, nothing to do")
             prefs.lastWakeCheck = "$stamp · already mining"
             return Result.success()
         }
         val found = try {
             Miner(applicationContext, prefs, app.api).hasWork()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            DiagLog.w("wake: check stopped by the system (stop reason ${if (Build.VERSION.SDK_INT >= 31) stopReason else "?"})")
+            throw e
         } catch (e: Exception) {
             prefs.lastWakeCheck = "$stamp · check failed: ${e.message}"
             DiagLog.i("wake: check failed: ${e.message}")
@@ -47,7 +59,7 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             DiagLog.i("wake: nothing to mine")
             return Result.success()
         }
-        val started = runCatching { MinerService.start(applicationContext) }
+        val started = runCatching { MinerService.start(applicationContext, reason = "wake check: $found") }
         prefs.lastWakeCheck = "$stamp · $found · ${if (started.isSuccess) "started mining" else "sent notification"}"
         DiagLog.i("wake: $found → ${started.exceptionOrNull()?.let { "start blocked (${it.javaClass.simpleName}), notifying" } ?: "started mining"}")
         if (started.isFailure) notifyAvailable(found)
@@ -74,6 +86,16 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private const val NAME = "wake-check"
         private const val NOTIFY_ID = 2
 
+        /** WorkManager's view of the check, for the report. */
+        fun describe(context: Context): String = runCatching {
+            val infos = WorkManager.getInstance(context).getWorkInfosForUniqueWork(NAME).get()
+            if (infos.isEmpty()) "not scheduled" else infos.joinToString { info ->
+                "state ${info.state}, attempts ${info.runAttemptCount}" +
+                    (if (Build.VERSION.SDK_INT >= 31) ", stop reason ${info.stopReason}" else "") +
+                    ", next run ${SystemInfo.time(info.nextScheduleTimeMillis)}"
+            }
+        }.getOrElse { "unknown: ${it.message}" }
+
         /** (Re)schedule for the saved interval, or cancel when it is 0. */
         fun schedule(context: Context) {
             val minutes = DropSpikeApp.instance.prefs.wakeIntervalMin
@@ -86,6 +108,7 @@ class WakeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .build()
             wm.enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.UPDATE, request)
+            DiagLog.i("wake: scheduled every $minutes min")
         }
     }
 }

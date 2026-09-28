@@ -4,11 +4,14 @@ import dev.dropspike.data.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import dev.dropspike.data.DiagLog
 import okhttp3.FormBody
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -102,11 +105,31 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .addInterceptor(::logCall)
         .build()
+
+    /** One log line per request: what it was (tag), status, time, size. Never headers or bodies. */
+    private fun logCall(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        val label = req.tag(String::class.java) ?: "${req.url.host}${req.url.encodedPath}"
+        val started = System.nanoTime()
+        return try {
+            chain.proceed(req).also { resp ->
+                val ms = (System.nanoTime() - started) / 1_000_000
+                val size = resp.body?.contentLength()?.takeIf { it >= 0 }?.let { " ${it}B" } ?: ""
+                val line = "http $label → ${resp.code} in ${ms}ms$size"
+                if (resp.isSuccessful) DiagLog.i(line) else DiagLog.w(line)
+            }
+        } catch (e: IOException) {
+            DiagLog.e("http $label failed after ${(System.nanoTime() - started) / 1_000_000}ms", e)
+            throw e
+        }
+    }
 
     suspend fun validate(token: String): TokenInfo = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("https://id.twitch.tv/oauth2/validate")
+            .tag(String::class.java, "validate")
             .header("Authorization", "OAuth $token")
             .build()
         http.newCall(req).execute().use { resp ->
@@ -126,6 +149,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     suspend fun startDeviceLogin(client: DeviceClient): DeviceCode = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("https://id.twitch.tv/oauth2/device")
+            .tag(String::class.java, "device-code (${client.label})")
             .post(FormBody.Builder().add("client_id", client.clientId).add("scopes", "").build())
             .header("Client-Id", client.clientId)
             .header("X-Device-Id", prefs.deviceId)
@@ -153,6 +177,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     suspend fun pollDeviceLogin(code: DeviceCode): String? = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("https://id.twitch.tv/oauth2/token")
+            .tag(String::class.java, "device-token poll")
             .post(
                 FormBody.Builder()
                     .add("client_id", code.client.clientId)
@@ -282,16 +307,16 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
      * directly from the page, or via the page's settings.<hash>.js.
      */
     suspend fun spadeUrl(login: String): String = withContext(Dispatchers.IO) {
-        fun get(url: String): String = http.newCall(
-            Request.Builder().url(url).header("User-Agent", userAgent).build(),
+        fun get(url: String, label: String): String = http.newCall(
+            Request.Builder().url(url).tag(String::class.java, label).header("User-Agent", userAgent).build(),
         ).execute().use { it.body?.string().orEmpty() }
 
         val spade = Regex("\"spade_?url\": ?\"(https://[.\\w\\-/]+)\"", RegexOption.IGNORE_CASE)
         val settings = Regex("src=\"(https://[\\w.]+/config/settings\\.[0-9a-f]{32}\\.js)\"", RegexOption.IGNORE_CASE)
-        val html = get("https://www.twitch.tv/$login")
+        val html = get("https://www.twitch.tv/$login", "channel page $login")
         spade.find(html)?.groupValues?.get(1)?.let { return@withContext it }
         val settingsUrl = settings.find(html)?.groupValues?.get(1) ?: throw IOException("spade URL: no settings script on channel page")
-        spade.find(get(settingsUrl))?.groupValues?.get(1) ?: throw IOException("spade URL: not in settings script")
+        spade.find(get(settingsUrl, "settings script"))?.groupValues?.get(1) ?: throw IOException("spade URL: not in settings script")
     }
 
     /** One "minute-watched" heartbeat (DropForge send_watch). Twitch answers 204 when accepted. */
@@ -320,6 +345,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         val data = android.util.Base64.encodeToString(event.toString().toByteArray(), android.util.Base64.NO_WRAP)
         val req = Request.Builder()
             .url(spadeUrl)
+            .tag(String::class.java, "heartbeat ${stream.login} (broadcast ${stream.broadcastId}, game ${stream.gameName})")
             .post(FormBody.Builder().add("data", data).build())
             .header("User-Agent", userAgent)
             .build()
@@ -341,6 +367,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         val token = prefs.authToken ?: throw IOException("Not signed in")
         val builder = Request.Builder()
             .url("https://gql.twitch.tv/gql")
+            .tag(String::class.java, "gql ${body.optString("operationName")}${if (useIntegrity) " +integrity" else ""} (${origin.label})")
             .post(body.toString().toRequestBody(JSON))
             .header("Client-Id", prefs.clientId)
             .header("Authorization", "OAuth $token")
@@ -363,6 +390,9 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 val text = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}: ${text.take(300)}")
                 JSONObject(text)
+            }
+            root.errorMessages().takeIf { it.isNotEmpty() }?.let {
+                DiagLog.w("gql ${body.optString("operationName")} errors: ${it.joinToString()}")
             }
             if (attempt == 0 && root.errorMessages().contains("PersistedQueryNotFound")) delay(1_000) else break
         }

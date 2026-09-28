@@ -62,6 +62,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,12 +78,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.launch
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.dropspike.BuildConfigInfo
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
+import dev.dropspike.data.ReportBuilder
 import dev.dropspike.data.UptimeLog
 import dev.dropspike.service.MinerService
 import dev.dropspike.service.MinerState
@@ -468,9 +471,50 @@ private fun LogCard() {
     val lines by DiagLog.lines.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var building by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+
+    fun withReport(action: (String) -> Unit) {
+        building = true
+        result = null
+        scope.launch {
+            val text = runCatching { ReportBuilder.build(context) }.getOrElse { "Report failed: ${it.message}" }
+            building = false
+            action(text)
+        }
+    }
 
     Section(6, "Diagnostics") {
-        Hint("Contains no tokens. Copy and share this when reporting results.")
+        Hint("The full report includes settings, power state, the miner's internals, a 24-hour uptime table, every mining minute for the last 6 hours, a live inventory snapshot, how Android last stopped the app, and the persistent log. It contains no tokens.")
+        Buttons {
+            Button(onClick = {
+                withReport { text ->
+                    val file = ReportBuilder.writeFile(context, text)
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.reports", file)
+                    val send = Intent(Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(Intent.EXTRA_STREAM, uri)
+                        .putExtra(Intent.EXTRA_SUBJECT, file.name)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    context.startActivity(Intent.createChooser(send, "Share DropSpike report"))
+                    result = "Report ready: ${file.name} (${text.length / 1024} KB)"
+                    DiagLog.i("report: shared ${file.name}, ${text.length / 1024} KB")
+                }
+            }, enabled = !building) { Text(if (building) "Building…" else "Share full report") }
+            OutlinedButton(onClick = {
+                withReport { text ->
+                    // Clipboard transfers fail above ~1 MB; keep the head (all the state) and the newest log.
+                    val limit = 400_000
+                    val clipped = if (text.length <= limit) text else
+                        text.take(limit / 2) + "\n\n…[${(text.length - limit) / 1024} KB of older log cut; use Share for everything]…\n\n" + text.takeLast(limit / 2)
+                    clipboard.setText(AnnotatedString(clipped))
+                    result = "Copied ${clipped.length / 1024} KB" + if (clipped.length < text.length) " (trimmed; Share has it all)" else ""
+                }
+            }, enabled = !building) { Text("Copy full report") }
+            TextButton(onClick = { DiagLog.clear(); result = "Log cleared" }) { Text("Clear log") }
+        }
+        result?.let { Hint(it) }
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerHighest,
             shape = RoundedCornerShape(12.dp),
@@ -478,19 +522,13 @@ private fun LogCard() {
         ) {
             SelectionContainer {
                 Text(
-                    if (lines.isEmpty()) "Nothing logged yet." else lines.takeLast(60).joinToString("\n"),
+                    if (lines.isEmpty()) "Nothing logged yet." else lines.takeLast(80).joinToString("\n"),
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
                     modifier = Modifier.padding(12.dp),
                 )
             }
-        }
-        Buttons {
-            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(BuildConfigInfo.header(context) + lines.joinToString("\n"))) }) {
-                Text("Copy report")
-            }
-            TextButton(onClick = DiagLog::clear) { Text("Clear") }
         }
     }
 }

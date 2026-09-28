@@ -34,6 +34,17 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- Shares diagnostics reports as files (cache/reports only). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.reports"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/report_paths" />
+        </provider>
+
         <service
             android:name=".service.MinerService"
             android:exported="false"

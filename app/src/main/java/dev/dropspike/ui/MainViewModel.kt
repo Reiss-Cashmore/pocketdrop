@@ -112,7 +112,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleWatched(game: WatchedGame) {
         val current = prefs.watchedGames
-        prefs.watchedGames = if (current.any { it.slug == game.slug }) current.filterNot { it.slug == game.slug } else current + game
+        val removing = current.any { it.slug == game.slug }
+        prefs.watchedGames = if (removing) current.filterNot { it.slug == game.slug } else current + game
+        DiagLog.i("games: ${if (removing) "unwatched" else "watching"} ${game.name}; list now ${prefs.watchedGames.joinToString { it.name }.ifEmpty { "empty" }}")
         reloadGames()
     }
 
@@ -128,6 +130,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setOnlyWatched(on: Boolean) {
         prefs.onlyWatched = on
+        DiagLog.i("games: only watched = $on")
         reloadGames()
     }
 
