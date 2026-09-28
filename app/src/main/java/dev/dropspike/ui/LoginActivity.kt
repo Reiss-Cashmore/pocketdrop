@@ -43,7 +43,7 @@ class LoginActivity : Activity() {
 
     private lateinit var webView: WebView
     private lateinit var urlText: TextView
-    private lateinit var progress: ProgressBar
+    private lateinit var progressBar: ProgressBar
     private var defaultUserAgent = ""
     private var desktop = false
     private var software = false
@@ -91,7 +91,7 @@ class LoginActivity : Activity() {
                 DiagLog.i("login: software rendering ${if (software) "on" else "off"}")
             })
         }
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
         webView = createWebView()
 
         val root = LinearLayout(this).apply {
@@ -100,7 +100,7 @@ class LoginActivity : Activity() {
             setBackgroundColor(Color.rgb(0x9A, 0x9A, 0xA0))
             addView(urlText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(HorizontalScrollView(this@LoginActivity).apply { addView(buttons) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            addView(progress, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(progressBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(webView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         }
         // Keep content clear of the status and navigation bars on edge-to-edge Android.
@@ -128,8 +128,8 @@ class LoginActivity : Activity() {
 
         webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) {
-                progress.progress = newProgress
-                progress.visibility = if (newProgress in 1..99) View.VISIBLE else View.INVISIBLE
+                progressBar.progress = newProgress
+                progressBar.visibility = if (newProgress in 1..99) View.VISIBLE else View.INVISIBLE
             }
 
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
