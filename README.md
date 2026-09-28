@@ -1,23 +1,31 @@
-# DropSpike
+# PocketDrop
 
-A throwaway Android spike that answers three questions before we build a real
-Twitch drops miner for Android:
+Earn Twitch drops in the background on Android. No video is streamed: PocketDrop sends Twitch
+the same once-a-minute "minute-watched" heartbeat its player does, picks live drops-enabled
+channels for the games you choose, and claims finished drops automatically.
 
-1. **Login.** Can we sign in with Twitch's own login page in a WebView and keep the session?
-2. **Integrity.** Can an Android WebView get a Client-Integrity token that Twitch accepts,
-   so the drops campaign list (gated since 2026-09-18) comes back?
-3. **Background.** Will Android (GrapheneOS first, other phones after) let a foreground
-   service tick once a minute with the screen off?
+- **Home:** what's being mined right now, a minute-by-minute uptime chart, and every campaign
+  in progress.
+- **Games:** your watch list (mined first, in order), a searchable box-art picker of every game
+  with an active campaign, account-link warnings, and an optional background check (30 min to
+  2 h) that starts mining when a watched game goes live.
+- **Settings:** account, background permissions, appearance, a full shareable diagnostics
+  report, and advanced tools.
+
+It began as a spike to prove three things on Android, all now confirmed on a Pixel 10 Pro Fold
+(GrapheneOS): a WebView login yields a web-client session, an Android WebView can mint a
+Client-Integrity token Twitch accepts (unlocking the campaign list gated since 2026-09-18), and
+a foreground service keeps mining overnight with the screen off.
 
 The design follows [DropForge](https://github.com/HimanM/DropForge) (MIT). Its
 `network/integrity.py` gets the same token by running Twitch's Kasada script in desktop
-Chrome over CDP. Here an Android WebView plays that role instead.
+Chrome over CDP; here an Android WebView plays that role.
 
 ## Install
 
 ### From CI (no Android tooling needed)
 1. Push this folder to a GitHub repo.
-2. **Actions → Build APK → latest run → Artifacts → DropSpike-apk.** Unzip it and install
+2. **Actions → Build APK → latest run → Artifacts → PocketDrop-apk.** Unzip it and install
    the APK on the phone.
 3. For updates straight to the phone, push a tag (`git tag v0.1.0 && git push --tags`) and
    point [Obtainium](https://github.com/ImranR98/Obtainium) at the repo's releases.
