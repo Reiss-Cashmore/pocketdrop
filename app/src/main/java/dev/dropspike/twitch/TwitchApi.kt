@@ -46,6 +46,40 @@ data class DeviceCode(
     val expiresAtMs: Long,
 )
 
+data class InvDrop(
+    val id: String,
+    val name: String,
+    val required: Int,
+    val minutes: Int,
+    val claimed: Boolean,
+    val instanceId: String?,
+    val preconditionsMet: Boolean,
+    val endsAtMs: Long,
+) {
+    val done get() = required in 1..minutes
+}
+
+data class InvCampaign(
+    val id: String,
+    val name: String,
+    val gameId: String,
+    val gameName: String,
+    val gameSlug: String?,
+    val endsAtMs: Long,
+    /** Non-empty when only these channels count towards the campaign. */
+    val allowedLogins: List<String>,
+    val drops: List<InvDrop>,
+)
+
+data class LiveStream(
+    val channelId: String,
+    val login: String,
+    val broadcastId: String,
+    val gameId: String,
+    val gameName: String,
+    val viewers: Int,
+)
+
 data class DropProgress(val campaign: String, val game: String, val drop: String, val minutes: Int, val required: Int, val claimed: Boolean)
 
 class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
@@ -144,25 +178,138 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     }
 
     /** Inventory is not integrity-gated today, so it works for background polling. */
-    suspend fun inventory(): List<DropProgress> {
+    suspend fun inventory(): List<DropProgress> = inventoryCampaigns().flatMap { c ->
+        c.drops.map { d -> DropProgress(c.name, c.gameName, d.name, d.minutes, d.required, d.claimed) }
+    }
+
+    /** In-progress campaigns with everything the miner needs (fields as DropForge's inventory.py). */
+    suspend fun inventoryCampaigns(): List<InvCampaign> {
         val root = gql(Queries.inventory(), useIntegrity = false)
         root.errorMessages().takeIf { it.isNotEmpty() }?.let { throw IOException("Inventory: ${it.joinToString()}") }
         val campaigns = root.optJSONObject("data")?.optJSONObject("currentUser")
             ?.optJSONObject("inventory")?.optJSONArray("dropCampaignsInProgress") ?: return emptyList()
-        return campaigns.objects().flatMap { c ->
-            val game = c.optJSONObject("game")?.let { it.optString("displayName").ifEmpty { it.optString("name") } }.orEmpty()
-            (c.optJSONArray("timeBasedDrops") ?: JSONArray()).objects().map { d ->
-                val self = d.optJSONObject("self")
-                DropProgress(
-                    campaign = c.optString("name"),
-                    game = game,
-                    drop = d.optString("name"),
-                    minutes = self?.optInt("currentMinutesWatched") ?: 0,
-                    required = d.optInt("requiredMinutesWatched"),
-                    claimed = self?.optBoolean("isClaimed") ?: false,
-                )
-            }
+        return campaigns.objects().map { c ->
+            val game = c.optJSONObject("game") ?: JSONObject()
+            val allow = c.optJSONObject("allow")
+            val allowEnabled = allow?.optBoolean("isEnabled", true) ?: false
+            InvCampaign(
+                id = c.optString("id"),
+                name = c.optString("name"),
+                gameId = game.optString("id"),
+                gameName = game.optString("displayName").ifEmpty { game.optString("name") },
+                gameSlug = game.optString("slug").ifEmpty { null },
+                endsAtMs = parseTime(c.optString("endAt")),
+                allowedLogins = if (allowEnabled) {
+                    (allow?.optJSONArray("channels") ?: JSONArray()).objects().map { it.optString("name") }.filter { it.isNotEmpty() }
+                } else emptyList(),
+                drops = (c.optJSONArray("timeBasedDrops") ?: JSONArray()).objects().map { d ->
+                    val self = d.optJSONObject("self")
+                    InvDrop(
+                        id = d.optString("id"),
+                        name = d.optString("name"),
+                        required = d.optInt("requiredMinutesWatched"),
+                        minutes = self?.optInt("currentMinutesWatched") ?: 0,
+                        claimed = self?.optBoolean("isClaimed") ?: false,
+                        instanceId = self?.optString("dropInstanceID")?.takeIf { it.isNotEmpty() && it != "null" },
+                        preconditionsMet = self?.optBoolean("hasPreconditionsMet", true) ?: true,
+                        endsAtMs = parseTime(d.optString("endAt")),
+                    )
+                },
+            )
         }
+    }
+
+    /** Live, drops-enabled streams for a game (DropForge get_live_streams). */
+    suspend fun liveStreams(game: InvCampaign, limit: Int = 20): List<LiveStream> {
+        val slug = game.gameSlug ?: slugOf(game.gameName)
+        val root = gql(Queries.gameDirectory(slug, limit), useIntegrity = false)
+        val edges = root.optJSONObject("data")?.optJSONObject("game")?.optJSONObject("streams")?.optJSONArray("edges")
+            ?: return emptyList()
+        return edges.objects().mapNotNull { e ->
+            val node = e.optJSONObject("node") ?: return@mapNotNull null
+            val caster = node.optJSONObject("broadcaster") ?: return@mapNotNull null
+            val g = node.optJSONObject("game")
+            LiveStream(
+                channelId = caster.optString("id"),
+                login = caster.optString("login"),
+                broadcastId = node.optString("id"),
+                gameId = g?.optString("id") ?: game.gameId,
+                gameName = g?.optString("displayName")?.ifEmpty { g.optString("name") } ?: game.gameName,
+                viewers = node.optInt("viewersCount"),
+            )
+        }
+    }
+
+    /** One channel's live stream, or null if offline (GetStreamInfo). */
+    suspend fun streamInfo(login: String): LiveStream? {
+        val root = gql(Queries.streamInfo(login), useIntegrity = false)
+        val user = root.optJSONObject("data")?.optJSONObject("user") ?: return null
+        val stream = user.optJSONObject("stream") ?: return null
+        val game = user.optJSONObject("broadcastSettings")?.optJSONObject("game")
+        return LiveStream(
+            channelId = user.optString("id"),
+            login = login,
+            broadcastId = stream.optString("id"),
+            gameId = game?.optString("id").orEmpty(),
+            gameName = game?.optString("displayName")?.ifEmpty { game.optString("name") }.orEmpty(),
+            viewers = stream.optInt("viewersCount"),
+        )
+    }
+
+    /**
+     * The channel's spade (analytics) URL, scraped from its page as DropForge get_spade_url does:
+     * directly from the page, or via the page's settings.<hash>.js.
+     */
+    suspend fun spadeUrl(login: String): String = withContext(Dispatchers.IO) {
+        fun get(url: String): String = http.newCall(
+            Request.Builder().url(url).header("User-Agent", userAgent).build(),
+        ).execute().use { it.body?.string().orEmpty() }
+
+        val spade = Regex("\"spade_?url\": ?\"(https://[.\\w\\-/]+)\"", RegexOption.IGNORE_CASE)
+        val settings = Regex("src=\"(https://[\\w.]+/config/settings\\.[0-9a-f]{32}\\.js)\"", RegexOption.IGNORE_CASE)
+        val html = get("https://www.twitch.tv/$login")
+        spade.find(html)?.groupValues?.get(1)?.let { return@withContext it }
+        val settingsUrl = settings.find(html)?.groupValues?.get(1) ?: throw IOException("spade URL: no settings script on channel page")
+        spade.find(get(settingsUrl))?.groupValues?.get(1) ?: throw IOException("spade URL: not in settings script")
+    }
+
+    /** One "minute-watched" heartbeat (DropForge send_watch). Twitch answers 204 when accepted. */
+    suspend fun sendMinuteWatched(spadeUrl: String, stream: LiveStream): Int = withContext(Dispatchers.IO) {
+        val event = JSONArray().put(
+            JSONObject()
+                .put("event", "minute-watched")
+                .put(
+                    "properties",
+                    JSONObject()
+                        .put("broadcast_id", stream.broadcastId)
+                        .put("channel_id", stream.channelId)
+                        .put("channel", stream.login)
+                        .put("client_time", java.time.Instant.now().toString())
+                        .put("game", stream.gameName)
+                        .put("game_id", stream.gameId)
+                        .put("hidden", false)
+                        .put("is_live", true)
+                        .put("live", true)
+                        .put("logged_in", true)
+                        .put("minutes_logged", 1)
+                        .put("muted", false)
+                        .put("user_id", prefs.userId.orEmpty()),
+                ),
+        )
+        val data = android.util.Base64.encodeToString(event.toString().toByteArray(), android.util.Base64.NO_WRAP)
+        val req = Request.Builder()
+            .url(spadeUrl)
+            .post(FormBody.Builder().add("data", data).build())
+            .header("User-Agent", userAgent)
+            .build()
+        http.newCall(req).execute().use { it.code }
+    }
+
+    /** Claims a finished drop (DropsPage_ClaimDropRewards, integrity-gated). Returns Twitch's status. */
+    suspend fun claimDrop(instanceId: String): String {
+        val root = gql(Queries.claimDrop(instanceId), useIntegrity = true)
+        root.errorMessages().takeIf { it.isNotEmpty() }?.let { throw IOException("Claim: ${it.joinToString()}") }
+        return root.optJSONObject("data")?.optJSONObject("claimDropRewards")?.optString("status") ?: "no result"
     }
 
     private suspend fun gql(
@@ -231,9 +378,51 @@ internal object Queries {
         JSONObject().put("fetchRewardCampaigns", false),
     )
 
+    fun gameDirectory(slug: String, limit: Int) = persisted(
+        "DirectoryPage_Game",
+        "86bcceb4e8b1a51256ff8eed8bd8aae4acacf80d737efe904f84f3aeadf8cafd",
+        JSONObject()
+            .put("limit", limit)
+            .put("slug", slug)
+            .put("imageWidth", 50)
+            .put("includeCostreaming", false)
+            .put(
+                "options",
+                JSONObject()
+                    .put("broadcasterLanguages", JSONArray())
+                    .put("freeformTags", JSONObject.NULL)
+                    .put("includeRestricted", JSONArray().put("SUB_ONLY_LIVE"))
+                    .put("recommendationsContext", JSONObject().put("platform", "web"))
+                    .put("sort", "RELEVANCE")
+                    .put("systemFilters", JSONArray().put("DROPS_ENABLED"))
+                    .put("tags", JSONArray())
+                    .put("requestID", "JIRA-VXP-2397"),
+            )
+            .put("sortTypeIsRecency", false),
+    )
+
+    fun streamInfo(login: String) = persisted(
+        "VideoPlayerStreamInfoOverlayChannel",
+        "198492e0857f6aedead9665c81c5a06d67b25b58034649687124083ff288597d",
+        JSONObject().put("channel", login),
+    )
+
+    fun claimDrop(instanceId: String) = persisted(
+        "DropsPage_ClaimDropRewards",
+        "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930",
+        JSONObject().put("input", JSONObject().put("dropInstanceID", instanceId)),
+    )
+
     fun inventory() = persisted(
         "Inventory",
         "8337eb8541b314040b0edde0c09c5c7a2783ba1960aa9edfbf3bac16d0fec404",
         JSONObject().put("fetchRewardCampaigns", false),
     )
 }
+
+/** DropForge Game.slug: lowercase, drop apostrophes, non-alphanumerics to single dashes. */
+internal fun slugOf(name: String): String =
+    name.lowercase().replace("'", "").replace(Regex("\\W+"), "-").replace(Regex("-{2,}"), "-").trim('-')
+
+internal fun parseTime(iso: String): Long =
+    runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrDefault(Long.MAX_VALUE)

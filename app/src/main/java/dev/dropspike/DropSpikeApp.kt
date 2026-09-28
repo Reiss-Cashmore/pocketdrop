@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import dev.dropspike.data.Prefs
+import dev.dropspike.data.UptimeLog
 import dev.dropspike.twitch.TwitchApi
 
 class DropSpikeApp : Application() {
@@ -19,6 +20,7 @@ class DropSpikeApp : Application() {
         super.onCreate()
         instance = this
         prefs = Prefs(this)
+        UptimeLog.init(this)
         // Spike only: lets chrome://inspect on a desktop attach to the app's WebViews over USB.
         WebView.setWebContentsDebuggingEnabled(true)
         // Use the WebView's own user agent for API calls so requests look like they come

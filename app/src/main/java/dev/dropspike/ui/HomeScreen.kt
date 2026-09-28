@@ -83,6 +83,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.dropspike.BuildConfigInfo
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.DiagLog
+import dev.dropspike.data.UptimeLog
 import dev.dropspike.service.MinerService
 import dev.dropspike.service.MinerState
 import dev.dropspike.twitch.DeviceClient
@@ -414,8 +415,10 @@ private fun BackgroundCard(vm: MainViewModel) {
     val prefs = DropSpikeApp.instance.prefs
     val killed = !status.running && prefs.sessionActive
 
-    Section(4, "Background session") {
-        Hint("A foreground service that ticks once a minute (the cadence watch heartbeats need) and checks drop progress every 5 minutes. Start it, turn the screen off for an hour, then compare ticks with elapsed time.")
+    val uptime by UptimeLog.entries.collectAsStateWithLifecycle()
+
+    Section(4, "Mining") {
+        Hint("Picks your unfinished drop closest to completion, finds a live drops-enabled channel for it, and sends Twitch the same once-a-minute \"minute-watched\" heartbeat as DropForge (no video). Green means Twitch's progress actually went up; amber means the heartbeat was accepted but progress hasn't moved yet.")
         StatusLine(notificationsOk, if (notificationsOk) "Notifications allowed" else "Notifications blocked")
         StatusLine(batteryOk, if (batteryOk) "Battery: unrestricted" else "Battery: optimised (Android may pause the session)")
 
@@ -427,9 +430,10 @@ private fun BackgroundCard(vm: MainViewModel) {
                 if (status.running) true else null,
                 if (status.running) "Running · ${status.ticks} ticks since ${formatTime(prefs.sessionStartedAt)}" else "Stopped after ${status.ticks} ticks",
             )
+            if (status.summary.isNotEmpty()) StatusLine(null, status.summary)
             Hint("Largest gap between ticks: ${status.maxGapSec}s (≈60s is healthy)")
-            if (status.summary.isNotEmpty()) Hint(status.summary)
         }
+        UptimeChart(uptime, status.running)
 
         Buttons {
             if (status.running) {
@@ -439,7 +443,7 @@ private fun BackgroundCard(vm: MainViewModel) {
                     if (!notificationsOk && Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     prefs.sessionActive = false
                     MinerService.start(context)
-                }) { Text("Start") }
+                }) { Text("Start mining") }
             }
             if (!batteryOk) OutlinedButton(onClick = { requestUnrestrictedBattery(context) }) { Text("Allow background") }
         }

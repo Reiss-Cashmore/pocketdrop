@@ -15,7 +15,8 @@ import androidx.core.content.ContextCompat
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.R
 import dev.dropspike.data.DiagLog
-import dev.dropspike.twitch.DropProgress
+import dev.dropspike.data.MinuteStatus
+import dev.dropspike.data.UptimeLog
 import dev.dropspike.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,42 +80,39 @@ class MinerService : Service() {
         MinerState.update { MinerStatus(running = true) }
         DiagLog.i("service: started")
 
+        val miner = Miner(this, prefs, DropSpikeApp.instance.api)
         loop = scope.launch {
             var last = SystemClock.elapsedRealtime()
             var tick = 0
             while (isActive) {
-                val now = SystemClock.elapsedRealtime()
-                val gap = (now - last) / 1000
-                last = now
+                val started = SystemClock.elapsedRealtime()
+                val gap = (started - last) / 1000
+                last = started
                 tick++
                 prefs.lastTickAt = System.currentTimeMillis()
 
-                var summary = MinerState.status.value.summary
-                if (tick == 1 || tick % INVENTORY_EVERY_TICKS == 0) {
-                    summary = runCatching { summarise(DropSpikeApp.instance.api.inventory()) }
-                        .getOrElse { "Inventory failed: ${it.message}" }
-                    DiagLog.i("service: tick $tick, gap ${gap}s, $summary")
+                val (status, note) = try {
+                    miner.tick()
+                } catch (e: Exception) {
+                    MinuteStatus.Failed to "Miner error: ${e.message}"
                 }
+                UptimeLog.record(status, note)
+                if (status != MinuteStatus.Credited && status != MinuteStatus.Sent) DiagLog.i("miner: $status · $note")
+
                 MinerState.update {
                     it.copy(
                         ticks = tick,
                         maxGapSec = if (tick == 1) 0 else maxOf(it.maxGapSec, gap),
                         lastTickAt = prefs.lastTickAt,
-                        summary = summary,
+                        summary = miner.describe,
                     )
                 }
                 getSystemService(android.app.NotificationManager::class.java)
-                    .notify(NOTIFICATION_ID, notification("Tick $tick · $summary"))
-                delay(TICK_MS)
+                    .notify(NOTIFICATION_ID, notification(miner.describe))
+                // One tick per minute, measured from the start of this tick.
+                delay((TICK_MS - (SystemClock.elapsedRealtime() - started)).coerceAtLeast(5_000))
             }
         }
-    }
-
-    private fun summarise(drops: List<DropProgress>): String {
-        val open = drops.filter { !it.claimed }
-        if (open.isEmpty()) return "No drops in progress"
-        val best = open.maxBy { it.minutes.toFloat() / it.required.coerceAtLeast(1) }
-        return "${open.size} in progress · ${best.game}: ${best.minutes}/${best.required} min"
     }
 
     override fun onDestroy() {
@@ -137,7 +135,7 @@ class MinerService : Service() {
         )
         return NotificationCompat.Builder(this, DropSpikeApp.CHANNEL_MINER)
             .setSmallIcon(R.drawable.ic_stat_drop)
-            .setContentTitle("DropSpike is running")
+            .setContentTitle("DropSpike is mining")
             .setContentText(text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -151,7 +149,6 @@ class MinerService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "dev.dropspike.STOP"
         private const val TICK_MS = 60_000L
-        private const val INVENTORY_EVERY_TICKS = 5
 
         fun start(context: Context) =
             ContextCompat.startForegroundService(context, Intent(context, MinerService::class.java))
