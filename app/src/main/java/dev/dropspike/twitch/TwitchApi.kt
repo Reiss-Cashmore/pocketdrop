@@ -155,7 +155,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         return try {
             chain.proceed(req).also { resp ->
                 val ms = (System.nanoTime() - started) / 1_000_000
-                val size = resp.body?.contentLength()?.takeIf { it >= 0 }?.let { " ${it}B" } ?: ""
+                val size = resp.body.contentLength().takeIf { it >= 0 }?.let { " ${it}B" } ?: ""
                 val line = "http $label → ${resp.code} in ${ms}ms$size"
                 if (resp.isSuccessful) DiagLog.i(line) else DiagLog.w(line)
             }
@@ -172,7 +172,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             .header("Authorization", "OAuth $token")
             .build()
         http.newCall(req).execute().use { resp ->
-            val body = resp.body?.string().orEmpty()
+            val body = resp.body.string()
             if (!resp.isSuccessful) throw IOException("validate HTTP ${resp.code}: ${body.take(200)}")
             val j = JSONObject(body)
             TokenInfo(
@@ -195,7 +195,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             .header("User-Agent", userAgent)
             .build()
         http.newCall(req).execute().use { resp ->
-            val body = resp.body?.string().orEmpty()
+            val body = resp.body.string()
             val j = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
             if (resp.code != 200 || !j.has("device_code")) {
                 val reason = j.optString("message").ifEmpty { j.optString("error") }.ifEmpty { body.take(200) }
@@ -231,7 +231,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         http.newCall(req).execute().use { resp ->
             // Twitch answers 400 until the code has been entered.
             if (resp.code != 200) return@withContext null
-            JSONObject(resp.body?.string().orEmpty()).getString("access_token")
+            JSONObject(resp.body.string()).getString("access_token")
         }
     }
 
@@ -376,7 +376,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     suspend fun spadeUrl(login: String): String = withContext(Dispatchers.IO) {
         fun get(url: String, label: String): String = http.newCall(
             Request.Builder().url(url).tag(String::class.java, label).header("User-Agent", userAgent).build(),
-        ).execute().use { it.body?.string().orEmpty() }
+        ).execute().use { it.body.string() }
 
         val spade = Regex("\"spade_?url\": ?\"(https://[.\\w\\-/]+)\"", RegexOption.IGNORE_CASE)
         val settings = Regex("src=\"(https://[\\w.]+/config/settings\\.[0-9a-f]{32}\\.js)\"", RegexOption.IGNORE_CASE)
@@ -471,7 +471,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         var root = JSONObject()
         for (attempt in 0..1) {
             root = http.newCall(request).execute().use { resp ->
-                val text = resp.body?.string().orEmpty()
+                val text = resp.body.string()
                 if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}: ${text.take(300)}")
                 JSONObject(text)
             }
