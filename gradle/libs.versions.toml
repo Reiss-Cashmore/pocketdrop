@@ -1,7 +1,7 @@
 # Versions as of 2026-09-28, following the layout of android/architecture-templates.
 # Dependabot (.github/dependabot.yml) proposes updates weekly.
 [versions]
-androidGradlePlugin = "9.4.0"
+androidGradlePlugin = "9.4.1"
 kotlin = "2.4.20"
 androidxComposeBom = "2026.09.00"
 androidxComposeMaterial3 = "1.4.0"
