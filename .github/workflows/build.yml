@@ -84,4 +84,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+      # Needs Settings → Advanced Security → Dependency graph turned on for the repo.
       - uses: gradle/actions/dependency-submission@v6
+        continue-on-error: true

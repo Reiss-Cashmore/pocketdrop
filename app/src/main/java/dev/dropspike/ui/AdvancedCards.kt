@@ -71,9 +71,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalClipboardManager
+import android.content.ClipData
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -101,7 +102,8 @@ import java.util.Date
 internal fun DeviceLoginDialog(vm: MainViewModel, onDismiss: () -> Unit) {
     val state by vm.deviceLogin.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val clipScope = rememberCoroutineScope()
     val code = state.code
 
     AlertDialog(
@@ -126,7 +128,7 @@ internal fun DeviceLoginDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                             FilledTonalButton(onClick = {
                                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(code.verificationUri)))
                             }) { Text("Open activate page") }
-                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(code.userCode)) }) { Text("Copy code") }
+                            OutlinedButton(onClick = { clipScope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Twitch code", code.userCode))) } }) { Text("Copy code") }
                         }
                     }
                     state.busy -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -281,7 +283,7 @@ internal fun formatTime(ms: Long): String =
 @Composable
 internal fun LogCard() {
     val lines by DiagLog.lines.collectAsStateWithLifecycle()
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var building by remember { mutableStateOf(false) }
@@ -320,7 +322,7 @@ internal fun LogCard() {
                     val limit = 400_000
                     val clipped = if (text.length <= limit) text else
                         text.take(limit / 2) + "\n\n…[${(text.length - limit) / 1024} KB of older log cut; use Share for everything]…\n\n" + text.takeLast(limit / 2)
-                    clipboard.setText(AnnotatedString(clipped))
+                    scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("PocketDrop report", clipped))) }
                     result = "Copied ${clipped.length / 1024} KB" + if (clipped.length < text.length) " (trimmed; Share has it all)" else ""
                 }
             }, enabled = !building) { Text("Copy full report") }

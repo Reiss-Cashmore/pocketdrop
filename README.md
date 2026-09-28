@@ -145,8 +145,10 @@ the next check starts it again.
 The [workflow](.github/workflows/build.yml) builds a release APK on every push to `main`.
 To build locally, open the project in Android Studio or run `./gradlew assembleRelease`.
 
-**Stack:** Kotlin 2.1, Jetpack Compose with Material 3 (adaptive navigation), WorkManager,
-OkHttp, and Coil. Minimum Android 10, targeting Android 15.
+**Stack:** Kotlin 2.4 on AGP 9 and Gradle 9, Jetpack Compose with Material 3 (adaptive
+navigation), WorkManager, OkHttp 5 and Coil 3. Minimum Android 10, targeting Android 17
+(API 37). Versions live in [`gradle/libs.versions.toml`](gradle/libs.versions.toml), and
+Dependabot proposes updates weekly.
 
 ### Signing
 
