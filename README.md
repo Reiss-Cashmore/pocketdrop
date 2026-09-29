@@ -86,8 +86,10 @@ releases and keeps them updated. It's free, open source, and works on GrapheneOS
 
 1. Install Obtainium, from its [releases](https://github.com/ImranR98/Obtainium/releases),
    F-Droid or IzzyOnDroid.
-2. On your phone, tap **[Get it on Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22dev.dropspike%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FReiss-Cashmore%2Fpocketdrop%22%2C%22author%22%3A%22Reiss-Cashmore%22%2C%22name%22%3A%22PocketDrop%22%7D)**. Or open Obtainium, tap **Add App**
-   and paste `https://github.com/Reiss-Cashmore/pocketdrop`.
+2. On your phone, tap **[Get it on Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22dev.dropspike%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FReiss-Cashmore%2Fpocketdrop%22%2C%22author%22%3A%22Reiss-Cashmore%22%2C%22name%22%3A%22PocketDrop%22%7D)**. Browsers block the automatic
+   hand-off to another app, so on the page that opens, tap **"Click here if you are not
+   redirected"**. Or skip the link: open Obtainium, tap **Add App** and paste
+   `https://github.com/Reiss-Cashmore/pocketdrop`.
 3. Tap **Install**. Obtainium then checks for new releases in the background and offers
    each update.
 
