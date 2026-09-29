@@ -1,0 +1,24 @@
+name: CORS probe (spike)
+on:
+  push:
+    branches: ["spike/**"]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Preflight and simple requests from different origins
+        run: |
+          for url in https://gql.twitch.tv/integrity https://gql.twitch.tv/gql; do
+            for origin in http://localhost:8765 http://127.0.0.1:8765 https://www.twitch.tv https://example.com null; do
+              pre=$(curl -s -o /dev/null -D - -X OPTIONS "$url" \
+                -H "Origin: $origin" \
+                -H "Access-Control-Request-Method: POST" \
+                -H "Access-Control-Request-Headers: authorization,client-id,x-device-id,client-session-id" \
+                | tr -d '\r' | grep -iE '^(HTTP|access-control-)' | tr '\n' ' ')
+              post=$(curl -s -o /dev/null -D - -X POST "$url" -H "Origin: $origin" \
+                -H "Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko" -H "Content-Type: text/plain" --data '{}' \
+                | tr -d '\r' | grep -iE '^(HTTP|access-control-allow-origin|access-control-allow-credentials)' | tr '\n' ' ')
+              echo "::notice title=$url from $origin::PREFLIGHT $pre || POST $post"
+            done
+          done
