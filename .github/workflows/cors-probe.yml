@@ -7,15 +7,13 @@ jobs:
   probe:
     runs-on: ubuntu-26.04
     steps:
-      - name: Kasada endpoints and integrity without Kasada
+      - name: Which clients still accept device-code login
         run: |
-          K=https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3
-          hdrs() { tr -d '\r' | grep -iE '^(HTTP|access-control-allow-(origin|credentials|headers|methods)|x-frame-options|content-security-policy|content-type|set-cookie)' | sed 's/set-cookie: \([^=]*\)=.*/set-cookie: \1=…/I' | cut -c1-160 | tr '\n' ' '; }
-          echo "::notice title=p.js GET::$(curl -s -o /dev/null -D - "$K/p.js" | hdrs)"
-          for origin in http://localhost:8765 https://www.twitch.tv; do
-            echo "::notice title=fp GET from $origin::$(curl -s -o /dev/null -D - "$K/fp?x-kpsdk-v=j-1.0.0" -H "Origin: $origin" -H "Referer: $origin/" | hdrs)"
-            echo "::notice title=tl preflight from $origin::$(curl -s -o /dev/null -D - -X OPTIONS "$K/tl" -H "Origin: $origin" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type,x-kpsdk-ct,x-kpsdk-dt,x-kpsdk-v,x-kpsdk-im' | hdrs)"
-            echo "::notice title=tl POST from $origin::$(curl -s -o /dev/null -D - -X POST "$K/tl" -H "Origin: $origin" -H 'Content-Type: application/octet-stream' --data 'x' | hdrs)"
+          for c in web:kimne78kx3ncx6brgo4mv6wki5h1ko mobile_web:r8s4dac0uhzifbpu9sjdiwzctle17ff android_app:kd1unb4b3q4t58fwlpcbzcbnm76a8fp smart_tv:ue6666qo983tsx6so1t0vnawi233wa; do
+            name=${c%%:*}; id=${c##*:}
+            out=$(curl -s -w ' HTTP%{http_code}' -X POST https://id.twitch.tv/oauth2/device \
+              -H 'Content-Type: application/x-www-form-urlencoded' --data "client_id=$id&scopes=")
+            # Show the status and field names only, not the codes themselves.
+            summary=$(echo "$out" | python3 -c "import sys,json,re;t=sys.stdin.read();b,s=t.rsplit(' ',1);d=json.loads(b) if b.strip().startswith('{') else {};print(s, sorted(d) if 'device_code' in d else d)")
+            echo "::notice title=device login: $name::$summary"
           done
-          body=$(curl -s -X POST https://gql.twitch.tv/integrity -H 'Origin: http://localhost:8765' -H 'Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko' | head -c 300)
-          echo "::notice title=integrity POST without Kasada (body)::$body"
