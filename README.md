@@ -82,8 +82,9 @@ Chrome; here an Android WebView plays that role.
 2. Unzip it and open the APK on your phone. Allow installing from your browser or file
    manager if Android asks.
 
-Updates install over the top as long as every build is signed with the same key (see
-[Signing](#signing)).
+Every build from this repo is signed with the same private key, so updates install over the
+top. Builds from before 29 Sep 2026 (0.1.28 and earlier) used a public test key: uninstall
+one of those once before installing a newer build, then sign in to Twitch again.
 
 ### First run
 1. **Sign in with Twitch.** The page is Twitch's own, and PocketDrop never sees your password.
@@ -128,8 +129,8 @@ the next check starts it again.
   when it expires, never the token itself.
 - **Build hardening.** WebView remote debugging is off in release builds, and app backups
   are disabled.
-- **Proof of origin.** Settings → Security shows whether your build is signed with your own
-  private key.
+- **Proof of origin.** Release builds are signed with a private key kept only in the repo's
+  Actions secrets. Settings → Security confirms which key signed the build you're running.
 
 ## Troubleshooting
 
@@ -152,8 +153,12 @@ Dependabot proposes updates weekly.
 
 ### Signing
 
-Until you add a private key, builds are signed with the public throwaway key in `keystore/`.
-Anyone could sign an "update" with that key. To use your own:
+CI signs release builds with a private key stored in four repository secrets (below), which
+only the workflow can read. When the secrets are missing, such as on a fork or a local build,
+the build falls back to the public test key in `keystore/`, and CI says so in a notice.
+Anyone can sign with that key, so don't distribute builds made with it.
+
+To set up signing on a fork, or to replace the key:
 
 1. Create a key on any machine with Java:
    `keytool -genkeypair -v -keystore pocketdrop.jks -alias pocketdrop -keyalg RSA -keysize 4096 -validity 10000`
@@ -165,7 +170,8 @@ Anyone could sign an "update" with that key. To use your own:
    - `SIGNING_KEY_PASSWORD`: the same as the store password unless you chose another
 4. Re-run the build. Android refuses an update signed with a different key, so uninstall the
    old PocketDrop once (you'll need to sign in to Twitch again) and then install the new APK.
-   Keep `pocketdrop.jks` and its password safe, because every future update needs them.
+   Keep `pocketdrop.jks` and its password safe: GitHub can't show secrets again, and every
+   future update needs the same key.
 
 ### Project layout
 
