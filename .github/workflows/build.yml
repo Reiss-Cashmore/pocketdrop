@@ -3,7 +3,8 @@ name: Build APK
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    # Docs-only changes don't change the app, so they don't build or publish a release.
+    paths-ignore: ["**.md", "docs/**", "art/**", "LICENSE"]
   pull_request:
   workflow_dispatch:
 
@@ -15,6 +16,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history and tags, for the release notes
 
       - uses: actions/setup-java@v6
         with:
@@ -104,19 +107,38 @@ jobs:
           print(f"::notice::OSV scan: {in_apk} known vulnerabilities in the APK, {tooling} in build-time tooling")
           PY
 
+      # versionName is 0.1.<run number> (app/build.gradle.kts); the tag and file name match it.
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk PocketDrop-${{ github.run_number }}.apk
+        run: cp app/build/outputs/apk/release/app-release.apk PocketDrop-0.1.${{ github.run_number }}.apk
 
       - uses: actions/upload-artifact@v7
         with:
           name: PocketDrop-apk
           path: PocketDrop-*.apk
 
-      # Push a tag like v0.1.0 to publish a release (Obtainium can track these).
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Every build of main becomes a GitHub release, which Obtainium installs automatically.
+      # Only builds signed with the private key are published, never the public test key.
+      - name: Release notes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.SIGNING_STORE_FILE != ''
+        run: |
+          previous=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          {
+            echo "## Changes"
+            git log ${previous:+$previous..}HEAD --no-merges --format='- %s' | grep -v '^- Merge ' | head -40
+            echo
+            echo "Signed with the PocketDrop release key. Install with [Obtainium](https://github.com/ImranR98/Obtainium) to get updates automatically."
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.SIGNING_STORE_FILE != ''
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: v0.1.${{ github.run_number }}
+          name: PocketDrop 0.1.${{ github.run_number }}
+          body_path: release-notes.md
+          target_commitish: ${{ github.sha }}
+          make_latest: "true"
           files: PocketDrop-*.apk
 
   # Sends the resolved dependency tree (including transitive ones) to GitHub, so Dependabot

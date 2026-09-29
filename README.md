@@ -8,6 +8,9 @@
 PocketDrop watches for your games, earns their drops in the background and claims them for you.
 It never plays any video.
 
+[<img src="docs/badge_obtainium.png" height="48" alt="Get it on Obtainium">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22dev.dropspike%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FReiss-Cashmore%2Fpocketdrop%22%2C%22author%22%3A%22Reiss-Cashmore%22%2C%22name%22%3A%22PocketDrop%22%7D)
+
+[![Latest release](https://img.shields.io/github/v/release/Reiss-Cashmore/pocketdrop?color=6A43D1&label=release)](https://github.com/Reiss-Cashmore/pocketdrop/releases/latest)
 [![Build](https://github.com/Reiss-Cashmore/pocketdrop/actions/workflows/build.yml/badge.svg)](https://github.com/Reiss-Cashmore/pocketdrop/actions/workflows/build.yml)
 ![Android 10+](https://img.shields.io/badge/Android-10%2B-6A43D1?logo=android&logoColor=white)
 ![No Google Play Services](https://img.shields.io/badge/Google%20Play%20Services-not%20needed-6A43D1)
@@ -77,14 +80,29 @@ Chrome; here an Android WebView plays that role.
 
 ## Install
 
-1. Open **[Actions → Build APK](https://github.com/Reiss-Cashmore/pocketdrop/actions/workflows/build.yml)**,
-   pick the newest green run, and download **PocketDrop-apk** under *Artifacts*.
-2. Unzip it and open the APK on your phone. Allow installing from your browser or file
-   manager if Android asks.
+### With Obtainium (recommended)
+[Obtainium](https://github.com/ImranR98/Obtainium) installs apps straight from their GitHub
+releases and keeps them updated. It's free, open source, and works on GrapheneOS.
 
-Every build from this repo is signed with the same private key, so updates install over the
-top. Builds from before 29 Sep 2026 (0.1.28 and earlier) used a public test key: uninstall
-one of those once before installing a newer build, then sign in to Twitch again.
+1. Install Obtainium, from its [releases](https://github.com/ImranR98/Obtainium/releases),
+   F-Droid or IzzyOnDroid.
+2. On your phone, tap **[Get it on Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22dev.dropspike%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FReiss-Cashmore%2Fpocketdrop%22%2C%22author%22%3A%22Reiss-Cashmore%22%2C%22name%22%3A%22PocketDrop%22%7D)**. Or open Obtainium, tap **Add App**
+   and paste `https://github.com/Reiss-Cashmore/pocketdrop`.
+3. Tap **Install**. Obtainium then checks for new releases in the background and offers
+   each update.
+
+### By hand
+Download `PocketDrop-0.1.N.apk` from the
+**[latest release](https://github.com/Reiss-Cashmore/pocketdrop/releases/latest)** and open it
+on your phone. Allow installing from your browser or file manager if Android asks.
+
+### Updates
+Every change to the app on `main` is built, signed with the PocketDrop release key and
+published as a new release (`v0.1.N`, matching the version shown in the app). Documentation-only
+changes don't create a release.
+
+Builds from before 29 Sep 2026 (0.1.28 and earlier) used a public test key. Uninstall one of
+those once before installing a release, then sign in to Twitch again.
 
 ### First run
 1. **Sign in with Twitch.** The page is Twitch's own, and PocketDrop never sees your password.
