@@ -60,7 +60,7 @@ jobs:
 
       # Known-vulnerability scan of every resolved library (direct and transitive) against OSV.
       - name: Resolve dependency tree
-        run: ./gradlew :app:dependencies --write-locks --quiet > /dev/null
+        run: ./gradlew buildEnvironment :app:dependencies --write-locks --quiet > /dev/null
 
       - name: Scan dependencies (OSV)
         uses: google/osv-scanner-action/osv-scanner-action@v2.6.0
@@ -70,6 +70,7 @@ jobs:
             --format=json
             --output=osv.json
             --lockfile=app/gradle.lockfile
+            --lockfile=buildscript-gradle.lockfile
 
       - name: Report vulnerabilities
         if: always()
@@ -80,10 +81,11 @@ jobs:
               print("::warning::Vulnerability scan produced no report"); raise SystemExit
           # Which Gradle configurations pull each library in (from the lockfile).
           configs = {}
-          for line in open("app/gradle.lockfile"):
-              if "=" in line and not line.startswith("#"):
-                  coord, confs = line.strip().split("=", 1)
-                  configs[coord] = confs.split(",")
+          for lockfile in ("app/gradle.lockfile", "buildscript-gradle.lockfile"):
+              for line in open(lockfile):
+                  if "=" in line and not line.startswith("#"):
+                      coord, confs = line.strip().split("=", 1)
+                      configs.setdefault(coord, []).extend(confs.split(","))
           in_apk = tooling = 0
           for r in json.load(open("osv.json")).get("results", []):
               for p in r.get("packages", []):
