@@ -47,6 +47,10 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         var onTarget = 0
         var credited = false
         val since = System.currentTimeMillis()
+        /** The stream's lowest-quality playlist, fetched on first watch and after a failure. */
+        var playlist: String? = null
+        /** Successful playlist watches this minute (the service pulses every ~20 s). */
+        var watches = 0
     }
 
     /** What is being mined right now, for the home screen (the first channel). */
@@ -150,16 +154,18 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             val t = slot.target
             slot.onTarget++
             val progress = "${t.game.name} · ${progressText(campaigns, t.game)} via ${t.stream.login}"
-            val code = try {
-                api.sendMinuteWatched(t.spadeUrl, t.stream)
-            } catch (e: Exception) {
+            // Watching is the playlist pulse (watch() here, then twice more before the next tick).
+            // The minute-watched heartbeat no longer earns drops but is still what the web player
+            // sends, so it's kept, best effort.
+            runCatching { api.sendMinuteWatched(t.spadeUrl, t.stream) }
+                .onFailure { DiagLog.i("miner: heartbeat ${t.stream.login} failed: ${it.message}") }
+            val watched = watch(slot)
+            DiagLog.i("miner: ${t.stream.login}: ${slot.watches} playlist watch(es) in the last minute${if (watched) "" else ", latest failed"}")
+            val ok = slot.watches > 0
+            slot.watches = 0
+            if (!ok) {
                 slots.remove(slot)
-                notes += "Heartbeat failed: ${e.message} · $progress"
-                continue
-            }
-            if (code != 204) {
-                slots.remove(slot)
-                notes += "Heartbeat HTTP $code · $progress"
+                notes += "Couldn't watch ${t.stream.login}'s stream · $progress"
                 continue
             }
             anySent = true
@@ -174,6 +180,29 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             anyCredited -> MinuteStatus.Credited to note
             anySent -> MinuteStatus.Sent to note
             else -> MinuteStatus.Failed to note
+        }
+    }
+
+    /** Watches every current channel once; the service calls this between minute ticks. */
+    suspend fun pulse() {
+        for (slot in slots.toList()) watch(slot)
+    }
+
+    /** One playlist watch for [slot]: fetch the playlist URL if needed, then HEAD its chunks. */
+    private suspend fun watch(slot: Slot): Boolean {
+        val login = slot.target.stream.login
+        return try {
+            val url = slot.playlist ?: api.streamPlaylistUrl(login)?.also { slot.playlist = it }
+                ?: throw java.io.IOException("no playable stream (offline?)")
+            api.watchPlaylist(url)
+            slot.watches++
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            slot.playlist = null // the URL expires; fetch a fresh one next time
+            DiagLog.i("miner: playlist watch $login failed: ${e.message}")
+            false
         }
     }
 

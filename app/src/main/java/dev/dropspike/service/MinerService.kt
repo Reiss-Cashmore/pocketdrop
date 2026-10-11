@@ -172,8 +172,15 @@ class MinerService : Service() {
                 }
                 getSystemService(android.app.NotificationManager::class.java)
                     .notify(NOTIFICATION_ID, notification(if (waiting != null) "Paused, $waiting" else miner.describe))
-                // One tick per minute, measured from the start of this tick.
-                delay((TICK_MS - took).coerceAtLeast(5_000))
+                // Watch the stream about every 20 s (TwitchDropsMiner's cadence), with the minute tick
+                // (progress, claims, channel choice) once a minute, measured from its start.
+                val tickStart = started
+                for (n in 1 until PULSES_PER_TICK) {
+                    val at = tickStart + n * TICK_MS / PULSES_PER_TICK
+                    delay((at - SystemClock.elapsedRealtime()).coerceAtLeast(1_000))
+                    runCatching { miner.pulse() }.onFailure { if (it is CancellationException) throw it }
+                }
+                delay((tickStart + TICK_MS - SystemClock.elapsedRealtime()).coerceAtLeast(1_000))
             }
         }
     }
@@ -270,6 +277,7 @@ class MinerService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "dev.dropspike.STOP"
         private const val TICK_MS = 60_000L
+        private const val PULSES_PER_TICK = 3
         private const val IDLE_STOP_TICKS = 10
         private const val WAKELOCK_MS = 3 * 60 * 1000L
 

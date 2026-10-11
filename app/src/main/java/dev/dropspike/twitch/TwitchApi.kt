@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import dev.dropspike.data.DiagLog
 import okhttp3.FormBody
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -156,8 +157,12 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             chain.proceed(req).also { resp ->
                 val ms = (System.nanoTime() - started) / 1_000_000
                 val size = resp.body.contentLength().takeIf { it >= 0 }?.let { " ${it}B" } ?: ""
-                val line = "http $label → ${resp.code} in ${ms}ms$size"
-                if (resp.isSuccessful) DiagLog.i(line) else DiagLog.w(line)
+                val line = "http ${label.removePrefix(QUIET)} → ${resp.code} in ${ms}ms$size"
+                when {
+                    !resp.isSuccessful -> DiagLog.w(line)
+                    // Dozens of these a minute; the miner logs one summary line instead.
+                    !label.startsWith(QUIET) -> DiagLog.i(line)
+                }
             }
         } catch (e: IOException) {
             DiagLog.e("http $label failed after ${(System.nanoTime() - started) / 1_000_000}ms", e)
@@ -387,6 +392,59 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     }
 
     /** One "minute-watched" heartbeat (DropForge send_watch). Twitch answers 204 when accepted. */
+    /**
+     * The URL of the channel's lowest-quality HLS playlist, as the web player gets it:
+     * a PlaybackAccessToken, then usher's list of qualities (TwitchDropsMiner Stream.get_stream_url).
+     * Null when the channel is offline.
+     */
+    suspend fun streamPlaylistUrl(login: String): String? {
+        val root = gql(Queries.playbackToken(login), useIntegrity = IntegrityRenewer.isFresh(prefs))
+        val token = root.optJSONObject("data")?.optJSONObject("streamPlaybackAccessToken")
+            ?: throw IOException("PlaybackAccessToken: ${root.errorMessages().joinToString().ifEmpty { "no token" }}")
+        return withContext(Dispatchers.IO) {
+            val url = HttpUrl.Builder().scheme("https").host("usher.ttvnw.net")
+                .addPathSegments("api/channel/hls/$login.m3u8")
+                .addQueryParameter("sig", token.optString("signature"))
+                .addQueryParameter("token", token.optString("value"))
+                .build()
+            val text = http.newCall(
+                Request.Builder().url(url).tag(String::class.java, "usher qualities $login").header("User-Agent", userAgent).build(),
+            ).execute().use { it.body.string() }
+            if (text.trimStart().startsWith("[") || text.trimStart().startsWith("{")) {
+                DiagLog.i("usher $login: ${text.take(200)}")
+                return@withContext null
+            }
+            // The last entry is usually the lowest quality, the cheapest to "watch".
+            text.lines().map { it.trim() }.lastOrNull { it.startsWith("http") }
+        }
+    }
+
+    /**
+     * One "watch" of the stream: fetch the live playlist and send a HEAD request for each video
+     * chunk in it, without downloading any video. Twitch counts this as watching; it replaced the
+     * minute-watched heartbeat, which stopped earning drops on 7 Oct 2026 (TwitchDropsMiner
+     * f693b0c). Returns the number of chunks; throws when the stream can't be read.
+     */
+    suspend fun watchPlaylist(playlistUrl: String): Int = withContext(Dispatchers.IO) {
+        val text = http.newCall(
+            Request.Builder().url(playlistUrl).tag(String::class.java, QUIET + "playlist")
+                .header("User-Agent", userAgent).header("Connection", "close").build(),
+        ).execute().use { resp ->
+            if (resp.code >= 400) throw IOException("playlist HTTP ${resp.code} (offline?)")
+            resp.body.string()
+        }
+        if (text.trimStart().startsWith("[") || text.trimStart().startsWith("{")) throw IOException("playlist: ${text.take(200)}")
+        val chunks = text.lines().map { it.trim() }.filter { it.startsWith("http") }
+        if (chunks.isEmpty()) throw IOException("playlist has no chunks")
+        for (chunk in chunks) {
+            val code = http.newCall(
+                Request.Builder().url(chunk).head().tag(String::class.java, QUIET + "chunk").header("User-Agent", userAgent).build(),
+            ).execute().use { it.code }
+            if (code != 200) throw IOException("chunk HEAD HTTP $code")
+        }
+        chunks.size
+    }
+
     suspend fun sendMinuteWatched(spadeUrl: String, stream: LiveStream): Int = withContext(Dispatchers.IO) {
         val event = JSONArray().put(
             JSONObject()
@@ -504,6 +562,9 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
 internal fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJSONObject(it) }
 
 /** Persisted-query hashes copied from DevilXD/TwitchDropsMiner constants.py. */
+/** Request-tag prefix for high-volume calls the interceptor logs only when they fail. */
+private const val QUIET = "quiet:"
+
 internal object Queries {
     private fun persisted(name: String, sha: String, vars: JSONObject) = JSONObject()
         .put("operationName", name)
@@ -558,6 +619,14 @@ internal object Queries {
         "DropsPage_ClaimDropRewards",
         "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930",
         JSONObject().put("input", JSONObject().put("dropInstanceID", instanceId)),
+    )
+
+    // The web player's token request (TwitchDropsMiner constants.py PlaybackAccessToken).
+    fun playbackToken(login: String) = persisted(
+        "PlaybackAccessToken",
+        "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9",
+        JSONObject().put("isLive", true).put("isVod", false).put("login", login)
+            .put("platform", "web").put("playerType", "site").put("vodID", ""),
     )
 
     fun inventory() = persisted(
