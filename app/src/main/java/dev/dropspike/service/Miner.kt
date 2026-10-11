@@ -100,6 +100,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                 "Idle ticks in a row" to idleTicks.toString(),
                 "Games cooling down" to cooldown.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
                 "Claims attempted" to claimAttempts.entries.joinToString { "${it.key.take(8)}… at ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
+                "Claims Twitch accepts but hasn't delivered" to prefs.stuckClaims.entries.joinToString { "${it.key.take(8)}… ×${it.value.first}" }.ifEmpty { "none" },
             )
     }
 
@@ -324,27 +325,74 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
 
     private suspend fun claimFinished(campaigns: List<InvCampaign>) {
         val now = System.currentTimeMillis()
-        val finished = campaigns.flatMap { c -> c.drops.filter { it.done && !it.claimed && it.instanceId != null }.map { c to it } }
-            .filter { (_, d) -> now - (claimAttempts[d.instanceId] ?: 0L) > COOLDOWN_MS }
-        if (finished.isEmpty()) return
-        DiagLog.i("miner: ${finished.size} finished drop(s) to claim: ${finished.joinToString { (c, d) -> "${c.gameName} · ${d.name}" }}")
-        if (!IntegrityRenewer.ensureFresh(context, prefs, api.defaultOrigin().url)) {
-            DiagLog.i("miner: ${finished.size} drop(s) ready to claim, but no integrity token")
-            return
-        }
-        for ((c, d) in finished) {
-            val id = d.instanceId ?: continue
-            claimAttempts[id] = now
-            val result = runCatching { api.claimDrop(id) }
-            DiagLog.i("miner: claim ${c.gameName} · ${d.name} → ${result.getOrElse { it.message }}")
-            result.onSuccess { status ->
-                ClaimLog.record(ClaimEntry(System.currentTimeMillis(), c.gameName, c.gameId, c.name, d.name, d.imageUrl, status))
+        var stuck = prefs.stuckClaims
+        val present = campaigns.flatMap { c -> c.drops.map { it.id } }.toSet()
+
+        // Claims are recorded once Twitch's inventory confirms them, not when the mutation answers:
+        // Twitch can answer ELIGIBLE_FOR_ALL and still never deliver the drop.
+        for (c in campaigns) for (d in c.drops) {
+            if (d.claimed && stuck.containsKey(d.id)) {
+                ClaimLog.record(ClaimEntry(now, c.gameName, c.gameId, c.name, d.name, d.imageUrl, "CLAIMED"))
+                DiagLog.i("miner: ${c.gameName} · ${d.name} is now claimed")
+                stuck = stuck - d.id
             }
         }
+        stuck = stuck.filterKeys { it in present } // campaign ended or drop gone
+
+        val finished = campaigns.flatMap { c -> c.drops.filter { it.done && !it.claimed && it.instanceId != null }.map { c to it } }
+            .filter { (_, d) -> now - (claimAttempts[d.id] ?: 0L) > COOLDOWN_MS && (stuck[d.id]?.second ?: 0L) <= now }
+        if (finished.isEmpty()) {
+            prefs.stuckClaims = stuck
+            return
+        }
+        DiagLog.i("miner: ${finished.size} finished drop(s) to claim: ${finished.joinToString { (c, d) -> "${c.gameName} · ${d.name}" }}")
+        val origin = api.defaultOrigin().url
+        if (!IntegrityRenewer.ensureFresh(context, prefs, origin)) {
+            DiagLog.i("miner: ${finished.size} drop(s) ready to claim, but no integrity token")
+            prefs.stuckClaims = stuck
+            return
+        }
+        var reminted = false
+        for ((c, d) in finished) {
+            val id = d.instanceId ?: continue
+            claimAttempts[d.id] = now
+            var result = runCatching { api.claimDrop(id) }
+            // The token was rejected (TwitchApi has discarded it): mint a new one once and retry.
+            if (!reminted && result.exceptionOrNull()?.message?.contains("IntegrityCheckFailed") == true) {
+                reminted = true
+                DiagLog.i("miner: claim rejected the integrity token; minting a fresh one and retrying")
+                if (IntegrityRenewer.ensureFresh(context, prefs, origin)) result = runCatching { api.claimDrop(id) }
+            }
+            DiagLog.i("miner: claim ${c.gameName} · ${d.name} → ${result.getOrElse { it.message }}")
+            if (result.exceptionOrNull()?.message?.contains("IntegrityCheckFailed") == true) {
+                DiagLog.i("miner: integrity still rejected after renewing; trying again later")
+                break
+            }
+            val status = result.getOrNull() ?: continue
+            if (status != "ELIGIBLE_FOR_ALL" && status != "DROP_INSTANCE_ALREADY_CLAIMED") continue
+            // Accepted. If this keeps happening without the drop becoming claimed, stop retrying
+            // every 30 minutes and tell the user: Twitch won't deliver it from here.
+            val attempts = (stuck[d.id]?.first ?: 0) + 1
+            val next = if (attempts >= STUCK_AFTER) now + STUCK_RETRY_MS else 0L
+            stuck = stuck + (d.id to (attempts to next))
+            if (attempts == STUCK_AFTER) {
+                DiagLog.w(
+                    "miner: Twitch accepted the claim for ${c.gameName} · ${d.name} $attempts times but hasn't delivered it" +
+                        (if (!c.accountConnected) "; the game account isn't linked (${c.linkUrl ?: "no link URL"})" else "") +
+                        "; retrying every ${STUCK_RETRY_MS / 3_600_000} h",
+                )
+            }
+        }
+        prefs.stuckClaims = stuck
     }
 
     companion object {
         private const val COOLDOWN_MS = 30 * 60 * 1000L
+        private const val STUCK_AFTER = 3
+        private const val STUCK_RETRY_MS = 6 * 60 * 60 * 1000L
+
+        /** Twitch keeps accepting claims for this drop without delivering it (see claimFinished). */
+        fun isStuck(prefs: Prefs, dropId: String) = (prefs.stuckClaims[dropId]?.first ?: 0) >= STUCK_AFTER
         private const val NO_CREDIT_LIMIT = 10
         private const val SESSION_CHECK_AT = 3
     }

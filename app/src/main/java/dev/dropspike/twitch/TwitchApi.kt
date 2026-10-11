@@ -480,6 +480,12 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             }
             if (attempt == 0 && root.errorMessages().contains("PersistedQueryNotFound")) delay(1_000) else break
         }
+        // A token Twitch rejects stays rejected until it expires (now hours away), so drop it and
+        // let the next caller mint a fresh one instead of failing until then.
+        if (useIntegrity && root.errorMessages().contains("IntegrityCheckFailed")) {
+            prefs.clearIntegrity()
+            DiagLog.w("integrity: Twitch rejected the token (IntegrityCheckFailed); discarded it")
+        }
         root
     }
 

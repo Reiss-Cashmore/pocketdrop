@@ -36,14 +36,23 @@ object ClaimLog {
                 }.getOrNull()
             }
         }.getOrDefault(emptyList())
+        // Older versions logged every accepted claim attempt, so a drop Twitch never delivered could
+        // appear dozens of times. Keep the first entry per drop and rewrite the file.
+        val unique = _entries.value.distinctBy { listOf(it.game, it.campaign, it.drop) }
+        if (unique.size < _entries.value.size) {
+            runCatching { file.writeText(unique.joinToString("") { toJson(it).toString() + "\n" }) }
+            _entries.value = unique
+        }
     }
+
+    private fun toJson(entry: ClaimEntry) = JSONObject()
+        .put("at", entry.atMs).put("game", entry.game).put("gameId", entry.gameId).put("campaign", entry.campaign)
+        .put("drop", entry.drop).put("image", entry.imageUrl ?: "").put("status", entry.status)
 
     @Synchronized
     fun record(entry: ClaimEntry) {
-        val json = JSONObject()
-            .put("at", entry.atMs).put("game", entry.game).put("gameId", entry.gameId).put("campaign", entry.campaign)
-            .put("drop", entry.drop).put("image", entry.imageUrl ?: "").put("status", entry.status)
-        runCatching { file.appendText(json.toString() + "\n") }
+        if (_entries.value.any { it.game == entry.game && it.campaign == entry.campaign && it.drop == entry.drop }) return
+        runCatching { file.appendText(toJson(entry).toString() + "\n") }
         _entries.value = _entries.value + entry
     }
 }

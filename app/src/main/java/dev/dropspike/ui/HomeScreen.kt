@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.dropspike.DropSpikeApp
 import dev.dropspike.data.UptimeLog
 import dev.dropspike.service.AutoMine
+import dev.dropspike.service.Miner
 import dev.dropspike.service.MinerService
 import dev.dropspike.service.MinerState
 import dev.dropspike.service.MinerStatus
@@ -468,7 +469,11 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
                             Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                if (d.done) "Claiming" else "${d.minutes}/${d.required} min",
+                                when {
+                                    d.done && Miner.isStuck(DropSpikeApp.instance.prefs, d.id) -> "Claim on Twitch"
+                                    d.done -> "Claiming"
+                                    else -> "${d.minutes}/${d.required} min"
+                                },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = scheme.onSurfaceVariant,
                             )

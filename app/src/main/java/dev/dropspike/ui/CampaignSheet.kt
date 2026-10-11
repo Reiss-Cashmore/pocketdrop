@@ -23,6 +23,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
+import dev.dropspike.service.Miner
+import dev.dropspike.DropSpikeApp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,6 +72,8 @@ internal fun CampaignSheet(
     val game = remember(c.gameId) { WatchedGame(c.gameId, c.gameName, c.gameSlug ?: slugOf(c.gameName)) }
     val now = System.currentTimeMillis()
     val earned = c.drops.count { it.claimed || it.done }
+    val prefs = DropSpikeApp.instance.prefs
+    val stuckIds = c.drops.filter { it.done && !it.claimed && Miner.isStuck(prefs, it.id) }.map { it.id }.toSet()
     fun open(url: String) = context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -116,9 +121,33 @@ internal fun CampaignSheet(
                 }
             }
 
+            if (stuckIds.isNotEmpty()) {
+                Surface(color = scheme.errorContainer, shape = MaterialTheme.shapes.large) {
+                    Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "${stuckIds.size} finished drop${if (stuckIds.size == 1) "" else "s"} not delivered",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = scheme.onErrorContainer,
+                        )
+                        Text(
+                            "Twitch accepts PocketDrop's claims for these but never marks them claimed. " +
+                                (if (!c.accountConnected) "Your ${c.gameName} account isn't linked, which is the usual cause. Link it, then claim them on Twitch."
+                                else "Claim them on Twitch's inventory page; if Twitch offers to link a game account, do that first.") +
+                                " PocketDrop now retries every 6 hours instead of every 30 minutes.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onErrorContainer,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (!c.accountConnected) c.linkUrl?.let { url -> Button(onClick = { open(url) }) { Text("Link account") } }
+                            OutlinedButton(onClick = { open("https://www.twitch.tv/drops/inventory") }) { Text("Claim on Twitch") }
+                        }
+                    }
+                }
+            }
+
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("Drops", style = MaterialTheme.typography.titleMedium)
-                c.drops.sortedBy { it.required }.forEach { DropDetail(it, now) }
+                c.drops.sortedBy { it.required }.forEach { DropDetail(it, now, stuck = it.id in stuckIds) }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -162,7 +191,7 @@ internal fun CampaignSheet(
 }
 
 @Composable
-private fun DropDetail(d: InvDrop, now: Long) {
+private fun DropDetail(d: InvDrop, now: Long, stuck: Boolean) {
     val scheme = MaterialTheme.colorScheme
     Row(verticalAlignment = Alignment.CenterVertically) {
         DropImage(d.imageUrl, 52.dp)
@@ -173,6 +202,7 @@ private fun DropDetail(d: InvDrop, now: Long) {
                 Spacer(Modifier.width(8.dp))
                 when {
                     d.claimed -> Icon(Icons.Default.CheckCircle, "Claimed", tint = StatusColors.good, modifier = Modifier.size(20.dp))
+                    d.done && stuck -> Icon(Icons.Default.Warning, "Not delivered", tint = scheme.error, modifier = Modifier.size(18.dp))
                     d.done -> CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     !d.preconditionsMet -> Icon(Icons.Default.Lock, "Locked", tint = scheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                 }
@@ -186,6 +216,7 @@ private fun DropDetail(d: InvDrop, now: Long) {
             Text(
                 when {
                     d.claimed -> "Claimed"
+                    d.done && stuck -> "Earned · Twitch hasn't delivered it, claim on Twitch"
                     d.done -> "Earned · claiming"
                     !d.preconditionsMet -> "Unlocks after the previous drop · ${remaining(d.required)}"
                     d.endsAtMs <= now -> "Expired"

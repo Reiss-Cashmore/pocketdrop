@@ -119,7 +119,20 @@ class Prefs(context: Context) {
         get() = sp.getString("theme_mode", null) ?: "system"
         set(v) = sp.edit { putString("theme_mode", v) }
 
-    /** Material You wallpaper colours instead of the PocketDrop palette. */
+    /**
+     * Drops Twitch keeps accepting claims for but never marks claimed: drop id → [attempts,
+     * next attempt epoch ms]. Usually the game account isn't linked; see Miner.claimFinished.
+     */
+    var stuckClaims: Map<String, Pair<Int, Long>>
+        get() = runCatching {
+            val o = JSONObject(sp.getString("stuck_claims", null) ?: "{}")
+            o.keys().asSequence().associateWith { k -> o.getJSONArray(k).let { it.getInt(0) to it.getLong(1) } }
+        }.getOrDefault(emptyMap())
+        set(v) = sp.edit {
+            putString("stuck_claims", JSONObject().apply { v.forEach { (k, p) -> put(k, JSONArray().put(p.first).put(p.second)) } }.toString())
+        }
+
+        /** Material You wallpaper colours instead of the PocketDrop palette. */
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamic_color", false)
         set(v) = sp.edit { putBoolean("dynamic_color", v) }
