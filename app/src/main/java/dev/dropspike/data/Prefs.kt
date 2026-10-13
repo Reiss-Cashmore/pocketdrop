@@ -104,6 +104,14 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("two_channels", false)
         set(v) = sp.edit { putBoolean("two_channels", v) }
 
+    /**
+     * Also mine campaigns whose game account isn't linked. Twitch may count the time and keep
+     * the drops earned-but-unclaimed until the account is linked; the miner logs when it does.
+     */
+    var mineUnlinked: Boolean
+        get() = sp.getBoolean("mine_unlinked", true)
+        set(v) = sp.edit { putBoolean("mine_unlinked", v) }
+
     /** Only mine while the phone is charging. */
     var onlyCharging: Boolean
         get() = sp.getBoolean("only_charging", false)

@@ -67,6 +67,9 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
 
     private val slots = mutableListOf<Slot>()
 
+    /** Games already reported as earning without a linked account (logged once each). */
+    private val unlinkedEarning = mutableSetOf<String>()
+
     /** Game key → until when it is skipped because watching it earned nothing. */
     private val cooldown = mutableMapOf<String, Long>()
 
@@ -211,6 +214,17 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val t = slot.target
         val minutes = gameMinutes(campaigns, t.game)
         slot.credited = slot.lastMinutes >= 0 && minutes > slot.lastMinutes
+        // Evidence for "unlinked accounts still earn": say so the first time it happens per game.
+        if (slot.credited && unlinkedEarning.add(key(t.game))) {
+            val unlinkedCampaigns = campaigns.filter { t.game.matches(it.gameId, it.gameName) && !it.accountConnected }
+            val watchedNeedsLink = prefs.watchedGames.any { it.needsLink && it.matches(t.game.id, t.game.name) }
+            if (unlinkedCampaigns.isNotEmpty() || watchedNeedsLink) {
+                DiagLog.i(
+                    "miner: ${t.game.name} credited WITHOUT a linked game account (${unlinkedCampaigns.joinToString { it.name }.ifEmpty { "campaign not in inventory yet" }}): " +
+                        "Twitch counts the time; the drops will need linking to claim",
+                )
+            }
+        }
         slot.withoutCredit = if (slot.credited) 0 else slot.withoutCredit + 1
         DiagLog.i("miner: ${t.game.name} unclaimed minutes ${slot.lastMinutes} → $minutes (${if (slot.credited) "credited" else "no change"}), ${slot.withoutCredit} min without credit, ${slot.onTarget} min on ${t.stream.login}")
         slot.lastMinutes = minutes
@@ -268,9 +282,9 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val now = System.currentTimeMillis()
         val watched = prefs.watchedGames.filter {
             // A watched game is worth trying unless its campaigns are in the inventory and fully earned,
-            // or none of its campaigns can earn because the game account isn't linked.
+            // or (with "mine unlinked" off) none of its campaigns can be claimed without a linked account.
             (!hasCampaign(campaigns, it) || hasOpenDrops(campaigns, it)) &&
-                !(it.needsLink && !hasCampaign(campaigns, it))
+                (prefs.mineUnlinked || !(it.needsLink && !hasCampaign(campaigns, it)))
         }
         val inProgress = if (prefs.onlyWatched) emptyList() else campaigns
             .filter { it.endsAtMs > now }
@@ -286,7 +300,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val list = candidates(campaigns).filter { key(it) !in exclude }
         val now = System.currentTimeMillis()
         val cooling = cooldown.filterValues { it > now }.keys
-        val unlinked = prefs.watchedGames.filter { it.needsLink && !hasCampaign(campaigns, it) }
+        val unlinked = if (prefs.mineUnlinked) emptyList() else prefs.watchedGames.filter { it.needsLink && !hasCampaign(campaigns, it) }
         DiagLog.i(
             "miner: choosing from ${list.size} candidate game(s): ${list.joinToString { it.name }.ifEmpty { "none" }}" +
                 (if (unlinked.isNotEmpty()) " · skipped, account not linked: ${unlinked.joinToString { it.name }}" else "") +

@@ -65,7 +65,7 @@ data class GamesState(
     val autoMine: Boolean = true,
 )
 
-data class MiningSettings(val twoChannels: Boolean, val onlyCharging: Boolean, val onlyWifi: Boolean)
+data class MiningSettings(val twoChannels: Boolean, val onlyCharging: Boolean, val onlyWifi: Boolean, val mineUnlinked: Boolean)
 
 data class RewardsState(
     val account: List<Reward> = emptyList(),
@@ -221,7 +221,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _mining = MutableStateFlow(loadMining())
     val mining: StateFlow<MiningSettings> = _mining
 
-    private fun loadMining() = MiningSettings(prefs.twoChannels, prefs.onlyCharging, prefs.onlyWifi)
+    private fun loadMining() = MiningSettings(prefs.twoChannels, prefs.onlyCharging, prefs.onlyWifi, prefs.mineUnlinked)
+
+    fun setMineUnlinked(on: Boolean) {
+        prefs.mineUnlinked = on
+        DiagLog.i("mining: mine campaigns needing an account link = $on")
+        _mining.value = loadMining()
+    }
 
     fun setTwoChannels(on: Boolean) {
         prefs.twoChannels = on

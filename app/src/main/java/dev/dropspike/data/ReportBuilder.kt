@@ -69,6 +69,7 @@ object ReportBuilder {
         kv("Background check", if (prefs.wakeIntervalMin == 0) "off" else "every ${prefs.wakeIntervalMin} min")
         kv("Auto mine", prefs.autoMine)
         kv("Watch two channels", prefs.twoChannels)
+        kv("Mine before linking accounts", prefs.mineUnlinked)
         kv("Only while charging", prefs.onlyCharging)
         kv("Only on Wi-Fi", prefs.onlyWifi)
         kv("Theme", prefs.themeMode)

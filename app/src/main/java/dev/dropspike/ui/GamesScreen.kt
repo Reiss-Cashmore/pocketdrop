@@ -76,6 +76,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.dropspike.DropSpikeApp
 import dev.dropspike.twitch.WatchedGame
 import java.text.DateFormat
 import java.util.Date
@@ -220,7 +221,16 @@ private fun WatchedRow(
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(game.linkUrl)))
                         },
                     ) {
-                        Pill(if (game.linkUrl != null) "Link account to earn" else "Needs account link", scheme.errorContainer, scheme.onErrorContainer)
+                        val mineUnlinked = DropSpikeApp.instance.prefs.mineUnlinked
+                        Pill(
+                            when {
+                                mineUnlinked -> if (game.linkUrl != null) "Link account to claim" else "Needs account link to claim"
+                                game.linkUrl != null -> "Link account to earn"
+                                else -> "Needs account link"
+                            },
+                            scheme.errorContainer,
+                            scheme.onErrorContainer,
+                        )
                     }
                 } else if (game.campaigns > 0) {
                     Hint("${game.campaigns} active campaign${if (game.campaigns == 1) "" else "s"}")

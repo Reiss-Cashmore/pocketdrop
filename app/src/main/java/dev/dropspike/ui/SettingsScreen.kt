@@ -115,6 +115,13 @@ fun SettingsScreen(vm: MainViewModel) {
                 SettingRow("Only on Wi-Fi", "Pause mining on mobile data (it uses very little: no video is streamed)", icon = AppIcons.Wifi) {
                     Switch(checked = mining.onlyWifi, onCheckedChange = { haptics.tick(); vm.setOnlyWifi(it) })
                 }
+                SettingRow(
+                    "Mine before linking accounts",
+                    "Earn drops for games whose account isn't linked yet; they wait, unclaimed, until you link it",
+                    icon = AppIcons.Link,
+                ) {
+                    Switch(checked = mining.mineUnlinked, onCheckedChange = { haptics.tick(); vm.setMineUnlinked(it) })
+                }
                 SettingRow("Watch two channels", "Mine two games at once, like a second browser tab", icon = AppIcons.Gamepad) {
                     Switch(checked = mining.twoChannels, onCheckedChange = { haptics.tick(); vm.setTwoChannels(it) })
                 }
