@@ -2,7 +2,7 @@
 # Dependabot (.github/dependabot.yml) proposes updates weekly.
 [versions]
 androidGradlePlugin = "9.4.1"
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 androidxComposeBom = "2026.09.00"
 androidxComposeMaterial3 = "1.4.0"
 androidxCore = "1.19.1"
@@ -15,7 +15,7 @@ coil = "3.6.3"
 # Patched versions for libraries AGP and its bundled lint pull in (see the build files).
 bouncycastle = "1.86"
 apacheHttpclient = "4.5.14"
-commonsLang3 = "3.20.0"
+commonsLang3 = "3.21.0"
 jdom2 = "2.0.6.1"
 jose4j = "0.9.7"
 
