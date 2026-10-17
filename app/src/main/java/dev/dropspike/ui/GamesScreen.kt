@@ -77,6 +77,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.dropspike.DropSpikeApp
+import dev.dropspike.service.Miner
 import dev.dropspike.twitch.WatchedGame
 import java.text.DateFormat
 import java.util.Date
@@ -215,7 +216,21 @@ private fun WatchedRow(
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(game.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (game.needsLink) {
+                val notCounting = Miner.notCountingUntil(DropSpikeApp.instance.prefs, game)
+                if (notCounting != null) {
+                    Box(
+                        Modifier.clip(CircleShape).clickable(enabled = game.linkUrl != null) {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(game.linkUrl)))
+                        },
+                    ) {
+                        Pill(
+                            "Twitch isn't counting this" + (if (game.linkUrl != null) " · link account" else ""),
+                            scheme.errorContainer,
+                            scheme.onErrorContainer,
+                        )
+                    }
+                    Hint("Skipped until ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(notCounting))}")
+                } else if (game.needsLink) {
                     Box(
                         Modifier.clip(CircleShape).clickable(enabled = game.linkUrl != null) {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(game.linkUrl)))

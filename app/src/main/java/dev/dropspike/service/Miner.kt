@@ -73,6 +73,12 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     /** Game key → until when it is skipped because watching it earned nothing. */
     private val cooldown = mutableMapOf<String, Long>()
 
+    /**
+     * Game key → minutes watched without credit while its campaign hasn't started on the account.
+     * Per game rather than per channel, so switching channels doesn't reset it.
+     */
+    private val uncounted = mutableMapOf<String, Int>()
+
     /** instanceId → when we last tried to claim it, so a failing claim isn't retried every minute. */
     private val claimAttempts = mutableMapOf<String, Long>()
 
@@ -106,6 +112,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             listOf(
                 "Idle ticks in a row" to idleTicks.toString(),
                 "Games cooling down" to cooldown.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
+                "Minutes not counted (campaign not started)" to uncounted.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "none" },
+                "Twitch not counting (skipped)" to prefs.notCounting.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
                 "Claims attempted" to claimAttempts.entries.joinToString { "${it.key.take(8)}… at ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
                 "Claims Twitch accepts but hasn't delivered" to prefs.stuckClaims.entries.joinToString { "${it.key.take(8)}… ×${it.value.first}" }.ifEmpty { "none" },
             )
@@ -122,6 +130,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val doneUnclaimed = campaigns.sumOf { c -> c.drops.count { it.done && !it.claimed } }
         DiagLog.i("miner: inventory ${campaigns.size} campaigns, $openCount open drops, $doneUnclaimed finished-unclaimed")
         claimFinished(campaigns)
+        forgetNotCounting(campaigns)
 
         // Credit check per channel: did the game's unclaimed minutes go up since the last reading?
         for (slot in slots.toList()) {
@@ -226,6 +235,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             }
         }
         slot.withoutCredit = if (slot.credited) 0 else slot.withoutCredit + 1
+        val started = hasOpenDrops(campaigns, t.game)
+        if (slot.credited || started) uncounted.remove(key(t.game)) else uncounted[key(t.game)] = (uncounted[key(t.game)] ?: 0) + 1
         DiagLog.i("miner: ${t.game.name} unclaimed minutes ${slot.lastMinutes} → $minutes (${if (slot.credited) "credited" else "no change"}), ${slot.withoutCredit} min without credit, ${slot.onTarget} min on ${t.stream.login}")
         slot.lastMinutes = minutes
         if (slot.withoutCredit == SESSION_CHECK_AT || slot.withoutCredit == SESSION_CHECK_AT * 2) {
@@ -239,9 +250,27 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                 return if (s.stuck) "Twitch session stuck on a finished drop ($s)" else "Twitch is counting another game (${s.gameName})"
             }
         }
+        // A campaign that hasn't started on the account gets longer: Twitch can take a while to add it.
+        // If after NOT_COUNTING_LIMIT minutes Twitch's session still isn't counting a drop for this
+        // game (0/0), it won't (usually the game account isn't linked): skip the game for a while.
+        if (!started && (uncounted[key(t.game)] ?: 0) >= NOT_COUNTING_LIMIT) {
+            val session = runCatching { api.currentDrop(t.stream.channelId) }.getOrNull()
+            uncounted.remove(key(t.game))
+            if (session == null || session.required == 0 || !t.game.matches("", session.gameName ?: t.game.name)) {
+                val until = System.currentTimeMillis() + NOT_COUNTING_RETRY_MS
+                prefs.notCounting = prefs.notCounting + (key(t.game) to until)
+                val link = prefs.watchedGames.firstOrNull { it.matches(t.game.id, t.game.name) }?.linkUrl
+                DiagLog.w(
+                    "miner: Twitch didn't count ${t.game.name} for $NOT_COUNTING_LIMIT min (session ${session ?: "none"}); " +
+                        "the game account probably needs linking${link?.let { " ($it)" } ?: ""}. Skipping it until ${SystemInfo.time(until)}",
+                )
+                return "Twitch isn't counting this game (0/0 for $NOT_COUNTING_LIMIT min)"
+            }
+            DiagLog.i("miner: ${t.game.name} not in the inventory yet, but Twitch is counting $session; staying")
+        }
         return when {
             // Twitch credits in bursts (sometimes 6+ minutes apart), so give it a while before giving up.
-            slot.withoutCredit >= NO_CREDIT_LIMIT -> "no progress in $NO_CREDIT_LIMIT min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
+            started && slot.withoutCredit >= NO_CREDIT_LIMIT -> "no progress in $NO_CREDIT_LIMIT min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
             // Everything for this game is earned (and it isn't just not started yet).
             hasCampaign(campaigns, t.game) && !hasOpenDrops(campaigns, t.game) -> "all drops earned"
             // Re-check the pick periodically: the channel may have gone offline or changed game.
@@ -291,9 +320,23 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             .flatMap { c -> openDrops(c).map { c to it } }
             .sortedByDescending { (_, d) -> d.minutes.toFloat() / d.required }
             .map { (c, _) -> WatchedGame(c.gameId, c.gameName, c.gameSlug ?: slugOf(c.gameName)) }
+        val notCounting = prefs.notCounting
         return (watched + inProgress)
             .distinctBy { key(it) }
-            .filter { (cooldown[key(it)] ?: 0L) < now }
+            .filter { (cooldown[key(it)] ?: 0L) < now && (notCounting[key(it)] ?: 0L) < now }
+    }
+
+    /** Clears "not counting" marks that have expired, or whose campaign has since started. */
+    private fun forgetNotCounting(campaigns: List<InvCampaign>) {
+        val now = System.currentTimeMillis()
+        val marks = prefs.notCounting
+        val kept = marks.filter { (k, until) ->
+            until > now && campaigns.none { key(WatchedGame(it.gameId, it.gameName, "")) == k && openDrops(it).isNotEmpty() }
+        }
+        if (kept.size != marks.size) {
+            DiagLog.i("miner: counting again: ${(marks.keys - kept.keys).joinToString()}")
+            prefs.notCounting = kept
+        }
     }
 
     private suspend fun select(campaigns: List<InvCampaign>, exclude: Set<String> = emptySet()): Target? {
@@ -363,8 +406,6 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             .maxByOrNull { it.minutes.toFloat() / it.required }
         return drop?.let { "${it.name} ${it.minutes}/${it.required}" } ?: "campaign not started yet"
     }
-
-    private fun key(g: WatchedGame) = g.id.ifEmpty { g.name.lowercase() }
 
     private suspend fun claimFinished(campaigns: List<InvCampaign>) {
         val now = System.currentTimeMillis()
@@ -436,7 +477,16 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
 
         /** Twitch keeps accepting claims for this drop without delivering it (see claimFinished). */
         fun isStuck(prefs: Prefs, dropId: String) = (prefs.stuckClaims[dropId]?.first ?: 0) >= STUCK_AFTER
+
+        /** When Twitch wouldn't count [game], until when the miner skips it; null if it isn't skipped. */
+        fun notCountingUntil(prefs: Prefs, game: WatchedGame) =
+            prefs.notCounting[key(game)]?.takeIf { it > System.currentTimeMillis() }
+
+        private fun key(g: WatchedGame) = g.id.ifEmpty { g.name.lowercase() }
+
         private const val NO_CREDIT_LIMIT = 10
+        private const val NOT_COUNTING_LIMIT = 30
+        private const val NOT_COUNTING_RETRY_MS = 6 * 60 * 60 * 1000L
         private const val SESSION_CHECK_AT = 3
     }
 }

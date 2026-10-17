@@ -140,7 +140,18 @@ class Prefs(context: Context) {
             putString("stuck_claims", JSONObject().apply { v.forEach { (k, p) -> put(k, JSONArray().put(p.first).put(p.second)) } }.toString())
         }
 
-        /** Material You wallpaper colours instead of the PocketDrop palette. */
+    /**
+     * Games Twitch wouldn't start counting for (session 0/0 for 30 minutes, usually an unlinked
+     * game account): game key → epoch ms until which the miner skips them. See Miner.checkCredit.
+     */
+    var notCounting: Map<String, Long>
+        get() = runCatching {
+            val o = JSONObject(sp.getString("not_counting", null) ?: "{}")
+            o.keys().asSequence().associateWith { o.getLong(it) }
+        }.getOrDefault(emptyMap())
+        set(v) = sp.edit { putString("not_counting", JSONObject(v).toString()) }
+
+    /** Material You wallpaper colours instead of the PocketDrop palette. */
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamic_color", false)
         set(v) = sp.edit { putBoolean("dynamic_color", v) }
