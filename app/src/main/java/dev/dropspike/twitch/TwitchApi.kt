@@ -72,8 +72,16 @@ data class InvDrop(
     val endsAtMs: Long,
     /** The reward's picture (first benefit), for the rewards history. */
     val imageUrl: String? = null,
+    /** Subscriptions to the campaign's channels (subscribing or gifting) the drop needs; watching can't earn these. */
+    val requiredSubs: Int = 0,
+    val currentSubs: Int = 0,
 ) {
-    val done get() = required in 1..minutes
+    /** Earned only by subscribing, not by watching. */
+    val subOnly get() = required == 0 && requiredSubs > 0
+
+    // Twitch only hands out a drop instance id once a sub drop is earned, so that counts too
+    // in case the inventory doesn't report currentSubs.
+    val done get() = required in 1..minutes || (subOnly && (currentSubs >= requiredSubs || instanceId != null))
 }
 
 data class InvCampaign(
@@ -325,6 +333,8 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                         instanceId = self?.optString("dropInstanceID")?.takeIf { it.isNotEmpty() && it != "null" },
                         preconditionsMet = self?.optBoolean("hasPreconditionsMet", true) ?: true,
                         endsAtMs = parseTime(d.optString("endAt")),
+                        requiredSubs = d.optInt("requiredSubs"),
+                        currentSubs = self?.optInt("currentSubs") ?: 0,
                         imageUrl = (d.optJSONArray("benefitEdges") ?: JSONArray()).objects().firstNotNullOfOrNull { e ->
                             e.optJSONObject("benefit")?.optString("imageAssetURL")?.takeIf { it.startsWith("http") }
                         },

@@ -472,6 +472,7 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
                                 when {
                                     d.done && Miner.isStuck(DropSpikeApp.instance.prefs, d.id) -> "Claim on Twitch"
                                     d.done -> "Claiming"
+                                    d.subOnly -> "Needs ${d.requiredSubs} sub${if (d.requiredSubs == 1) "" else "s"}"
                                     else -> "${d.minutes}/${d.required} min"
                                 },
                                 style = MaterialTheme.typography.labelMedium,

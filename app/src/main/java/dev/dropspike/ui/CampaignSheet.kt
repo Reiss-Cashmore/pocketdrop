@@ -220,6 +220,8 @@ private fun DropDetail(d: InvDrop, now: Long, stuck: Boolean) {
                     d.done -> "Earned · claiming"
                     !d.preconditionsMet -> "Unlocks after the previous drop · ${remaining(d.required)}"
                     d.endsAtMs <= now -> "Expired"
+                    d.subOnly -> "Subscription drop · subscribe or gift ${d.requiredSubs} sub${if (d.requiredSubs == 1) "" else "s"} " +
+                        "(${d.currentSubs} so far); watching doesn't count"
                     else -> "${d.minutes} of ${d.required} min · ${remaining(d.required - d.minutes)} to go"
                 },
                 style = MaterialTheme.typography.labelMedium,

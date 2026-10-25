@@ -114,6 +114,7 @@ object ReportBuilder {
                         d.claimed -> "claimed"
                         d.done -> "DONE, unclaimed"
                         !d.preconditionsMet -> "locked (needs earlier drop)"
+                        d.subOnly -> "subscription drop (${d.currentSubs}/${d.requiredSubs} subs, can't be mined)"
                         else -> "open"
                     }
                     line("    - ${d.name}: ${d.minutes}/${d.required} min, $state")
