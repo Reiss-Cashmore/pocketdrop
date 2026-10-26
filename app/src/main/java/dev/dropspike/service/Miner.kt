@@ -7,6 +7,7 @@ import dev.dropspike.data.DiagLog
 import dev.dropspike.data.MinuteStatus
 import dev.dropspike.data.Prefs
 import dev.dropspike.data.SystemInfo
+import dev.dropspike.twitch.DropSession
 import dev.dropspike.twitch.IntegrityRenewer
 import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.twitch.LiveStream
@@ -51,6 +52,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         var playlist: String? = null
         /** Successful playlist watches this minute (the service pulses every ~20 s). */
         var watches = 0
+        /** What Twitch's live session is counting for this game, while the inventory doesn't show it. */
+        var live: DropSession? = null
     }
 
     /** What is being mined right now, for the home screen (the first channel). */
@@ -78,6 +81,9 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
      * Per game rather than per channel, so switching channels doesn't reset it.
      */
     private val uncounted = mutableMapOf<String, Int>()
+
+    /** Drop id → when we last tried to claim it from the live session (see claimLive). */
+    private val liveClaimAttempts = mutableMapOf<String, Long>()
 
     /** instanceId → when we last tried to claim it, so a failing claim isn't retried every minute. */
     private val claimAttempts = mutableMapOf<String, Long>()
@@ -165,7 +171,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         for (slot in slots.toList()) {
             val t = slot.target
             slot.onTarget++
-            val progress = "${t.game.name} · ${progressText(campaigns, t.game)} via ${t.stream.login}"
+            val progress = "${t.game.name} · ${progressText(campaigns, t.game, slot.live)} via ${t.stream.login}"
             // Watching is the playlist pulse (watch() here, then twice more before the next tick).
             // The minute-watched heartbeat no longer earns drops but is still what the web player
             // sends, so it's kept, best effort.
@@ -186,7 +192,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         }
         now = slots.getOrNull(0)?.let { snapshot(it, campaigns, now) }
         second = slots.getOrNull(1)?.let { snapshot(it, campaigns, second) }
-        describe = slots.joinToString(" + ") { "${it.target.game.name} · ${progressText(campaigns, it.target.game)}" }.ifEmpty { "Finding a channel" }
+        describe = slots.joinToString(" + ") { "${it.target.game.name} · ${progressText(campaigns, it.target.game, it.live)}" }.ifEmpty { "Finding a channel" }
         val note = notes.joinToString(" + ")
         return when {
             anyCredited -> MinuteStatus.Credited to note
@@ -222,7 +228,15 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     private suspend fun checkCredit(slot: Slot, campaigns: List<InvCampaign>): String? {
         val t = slot.target
         val minutes = gameMinutes(campaigns, t.game)
-        slot.credited = slot.lastMinutes >= 0 && minutes > slot.lastMinutes
+        val started = hasOpenDrops(campaigns, t.game)
+        // Twitch's inventory can leave out a campaign it is counting (Escape from Tarkov and Hearthstone
+        // in Oct 2026 showed 356/480 and 63/420 in the session while missing from the inventory), so
+        // while the game has nothing open there, the live session is read every minute and is the credit.
+        val live = if (started) null else runCatching { api.currentDrop(t.stream.channelId) }.getOrNull()
+            ?.takeIf { it.required > 0 && t.game.matches("", it.gameName ?: t.game.name) }
+        val liveCredited = live != null && (slot.live?.let { it.dropId != live.dropId || live.minutes > it.minutes } ?: false)
+        slot.live = live
+        slot.credited = (slot.lastMinutes >= 0 && minutes > slot.lastMinutes) || liveCredited
         // Evidence for "unlinked accounts still earn": say so the first time it happens per game.
         if (slot.credited && unlinkedEarning.add(key(t.game))) {
             val unlinkedCampaigns = campaigns.filter { t.game.matches(it.gameId, it.gameName) && !it.accountConnected }
@@ -235,10 +249,15 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             }
         }
         slot.withoutCredit = if (slot.credited) 0 else slot.withoutCredit + 1
-        val started = hasOpenDrops(campaigns, t.game)
-        if (slot.credited || started) uncounted.remove(key(t.game)) else uncounted[key(t.game)] = (uncounted[key(t.game)] ?: 0) + 1
-        DiagLog.i("miner: ${t.game.name} unclaimed minutes ${slot.lastMinutes} → $minutes (${if (slot.credited) "credited" else "no change"}), ${slot.withoutCredit} min without credit, ${slot.onTarget} min on ${t.stream.login}")
+        if (started || live != null) uncounted.remove(key(t.game)) else uncounted[key(t.game)] = (uncounted[key(t.game)] ?: 0) + 1
+        DiagLog.i(
+            "miner: ${t.game.name} unclaimed minutes ${slot.lastMinutes} → $minutes" +
+                (if (started) "" else ", Twitch session ${live ?: "0/0"}") +
+                " (${if (slot.credited) "credited" else "no change"}), ${slot.withoutCredit} min without credit, ${slot.onTarget} min on ${t.stream.login}",
+        )
         slot.lastMinutes = minutes
+        // A drop finished in the session but missing from the inventory has no claim button here; claim it directly.
+        if (live != null && live.minutes >= live.required) claimLive(t.game, live)
         if (slot.withoutCredit == SESSION_CHECK_AT || slot.withoutCredit == SESSION_CHECK_AT * 2) {
             // Is Twitch still counting towards something else, e.g. a finished drop (the 4171/30 case)?
             val session = runCatching { api.currentDrop(t.stream.channelId) }
@@ -251,31 +270,57 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             }
         }
         // A campaign that hasn't started on the account gets longer: Twitch can take a while to add it.
-        // If after NOT_COUNTING_LIMIT minutes Twitch's session still isn't counting a drop for this
+        // If for NOT_COUNTING_LIMIT minutes in a row Twitch's session hasn't counted a drop for this
         // game (0/0), it won't (usually the game account isn't linked): skip the game for a while.
         if (!started && (uncounted[key(t.game)] ?: 0) >= NOT_COUNTING_LIMIT) {
-            val session = runCatching { api.currentDrop(t.stream.channelId) }.getOrNull()
             uncounted.remove(key(t.game))
-            if (session == null || session.required == 0 || !t.game.matches("", session.gameName ?: t.game.name)) {
-                val until = System.currentTimeMillis() + NOT_COUNTING_RETRY_MS
-                prefs.notCounting = prefs.notCounting + (key(t.game) to until)
-                val link = prefs.watchedGames.firstOrNull { it.matches(t.game.id, t.game.name) }?.linkUrl
-                DiagLog.w(
-                    "miner: Twitch didn't count ${t.game.name} for $NOT_COUNTING_LIMIT min (session ${session ?: "none"}); " +
-                        "the game account probably needs linking${link?.let { " ($it)" } ?: ""}. Skipping it until ${SystemInfo.time(until)}",
-                )
-                return "Twitch isn't counting this game (0/0 for $NOT_COUNTING_LIMIT min)"
-            }
-            DiagLog.i("miner: ${t.game.name} not in the inventory yet, but Twitch is counting $session; staying")
+            val until = System.currentTimeMillis() + NOT_COUNTING_RETRY_MS
+            prefs.notCounting = prefs.notCounting + (key(t.game) to until)
+            val link = prefs.watchedGames.firstOrNull { it.matches(t.game.id, t.game.name) }?.linkUrl
+            DiagLog.w(
+                "miner: Twitch didn't count ${t.game.name} for $NOT_COUNTING_LIMIT min (session 0/0); " +
+                    "the game account probably needs linking${link?.let { " ($it)" } ?: ""}. Skipping it until ${SystemInfo.time(until)}",
+            )
+            return "Twitch isn't counting this game (0/0 for $NOT_COUNTING_LIMIT min)"
         }
         return when {
             // Twitch credits in bursts (sometimes 6+ minutes apart), so give it a while before giving up.
-            started && slot.withoutCredit >= NO_CREDIT_LIMIT -> "no progress in $NO_CREDIT_LIMIT min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
+            (started || live != null) && slot.withoutCredit >= NO_CREDIT_LIMIT -> "no progress in $NO_CREDIT_LIMIT min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
             // Everything for this game is earned (and it isn't just not started yet).
-            hasCampaign(campaigns, t.game) && !hasOpenDrops(campaigns, t.game) -> "all drops earned"
+            hasCampaign(campaigns, t.game) && !hasOpenDrops(campaigns, t.game) && live == null -> "all drops earned"
             // Re-check the pick periodically: the channel may have gone offline or changed game.
             slot.onTarget >= 30 -> "periodic re-check"
             else -> null
+        }
+    }
+
+    /**
+     * Claims a drop the live session shows as finished but the inventory doesn't list. Its claim id is
+     * built as TwitchDropsMiner does (inventory.py generate_claim): "userId#campaignId#dropId", with
+     * the campaign found through the dashboard and DropCampaignDetails.
+     */
+    private suspend fun claimLive(game: WatchedGame, s: DropSession) {
+        val now = System.currentTimeMillis()
+        if (now - (liveClaimAttempts[s.dropId] ?: 0L) < COOLDOWN_MS) return
+        liveClaimAttempts[s.dropId] = now
+        val userId = prefs.userId ?: return
+        if (!IntegrityRenewer.ensureFresh(context, prefs, api.defaultOrigin().url)) {
+            DiagLog.i("miner: ${game.name} drop finished in the session, but no integrity token to claim it")
+            return
+        }
+        val found = runCatching { api.campaignForDrop(game, s.dropId) }
+            .onFailure { DiagLog.i("miner: looking up the campaign for ${game.name} drop ${s.dropId.take(8)}… failed: ${it.message}") }
+            .getOrNull()
+        if (found == null) {
+            DiagLog.i("miner: ${game.name} drop ${s.dropId.take(8)}… finished, but no active campaign lists it; claim it on Twitch")
+            return
+        }
+        val (c, d) = found
+        val result = runCatching { api.claimDrop("$userId#${c.id}#${d.id}") }
+        DiagLog.i("miner: claim ${c.gameName} · ${d.name} (from the live session) → ${result.getOrElse { it.message }}")
+        val status = result.getOrNull() ?: return
+        if (status == "ELIGIBLE_FOR_ALL" || status == "DROP_INSTANCE_ALREADY_CLAIMED") {
+            ClaimLog.record(ClaimEntry(now, c.gameName, c.gameId, c.name, d.name, d.imageUrl, "CLAIMED"))
         }
     }
 
@@ -284,14 +329,15 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val drop = campaigns.filter { t.game.matches(it.gameId, it.gameName) }
             .flatMap { c -> openDrops(c).map { c to it } }
             .maxByOrNull { (_, d) -> d.minutes.toFloat() / d.required }
+        val live = slot.live.takeIf { drop == null }
         return MiningNow(
             game = t.game.copy(id = t.game.id.ifEmpty { t.stream.gameId }),
             channel = t.stream.login,
             viewers = t.stream.viewers,
             campaign = drop?.first?.name,
-            drop = drop?.second?.name,
-            minutes = drop?.second?.minutes ?: 0,
-            required = drop?.second?.required ?: 0,
+            drop = drop?.second?.name ?: live?.let { "Drop in progress" },
+            minutes = drop?.second?.minutes ?: live?.minutes ?: 0,
+            required = drop?.second?.required ?: live?.required ?: 0,
             since = previous?.takeIf { it.channel == t.stream.login }?.since ?: slot.since,
         )
     }
@@ -403,10 +449,12 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     private fun gameMinutes(campaigns: List<InvCampaign>, game: WatchedGame) =
         campaigns.filter { game.matches(it.gameId, it.gameName) }.sumOf { c -> c.drops.filter { !it.claimed }.sumOf { it.minutes } }
 
-    private fun progressText(campaigns: List<InvCampaign>, game: WatchedGame): String {
+    private fun progressText(campaigns: List<InvCampaign>, game: WatchedGame, live: DropSession? = null): String {
         val drop = campaigns.filter { game.matches(it.gameId, it.gameName) }.flatMap { openDrops(it) }
             .maxByOrNull { it.minutes.toFloat() / it.required }
-        return drop?.let { "${it.name} ${it.minutes}/${it.required}" } ?: "campaign not started yet"
+        return drop?.let { "${it.name} ${it.minutes}/${it.required}" }
+            ?: live?.let { "drop in progress ${it.minutes}/${it.required} (not in inventory yet)" }
+            ?: "campaign not started yet"
     }
 
     private suspend fun claimFinished(campaigns: List<InvCampaign>) {

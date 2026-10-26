@@ -305,43 +305,62 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
 
     private fun parseCampaigns(inventory: JSONObject?): List<InvCampaign> {
         val campaigns = inventory?.optJSONArray("dropCampaignsInProgress") ?: return emptyList()
-        return campaigns.objects().map { c ->
-            val game = c.optJSONObject("game") ?: JSONObject()
-            val allow = c.optJSONObject("allow")
-            val allowEnabled = allow?.optBoolean("isEnabled", true) ?: false
-            InvCampaign(
-                id = c.optString("id"),
-                name = c.optString("name"),
-                gameId = game.optString("id"),
-                gameName = game.optString("displayName").ifEmpty { game.optString("name") },
-                gameSlug = game.optString("slug").ifEmpty { null },
-                endsAtMs = parseTime(c.optString("endAt")),
-                startsAtMs = parseTime(c.optString("startAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
-                accountConnected = c.optJSONObject("self")?.optBoolean("isAccountConnected", true) ?: true,
-                linkUrl = c.optString("accountLinkURL").takeIf { it.startsWith("http") },
-                allowedLogins = if (allowEnabled) {
-                    (allow?.optJSONArray("channels") ?: JSONArray()).objects().map { it.optString("name") }.filter { it.isNotEmpty() }
-                } else emptyList(),
-                drops = (c.optJSONArray("timeBasedDrops") ?: JSONArray()).objects().map { d ->
-                    val self = d.optJSONObject("self")
-                    InvDrop(
-                        id = d.optString("id"),
-                        name = d.optString("name"),
-                        required = d.optInt("requiredMinutesWatched"),
-                        minutes = self?.optInt("currentMinutesWatched") ?: 0,
-                        claimed = self?.optBoolean("isClaimed") ?: false,
-                        instanceId = self?.optString("dropInstanceID")?.takeIf { it.isNotEmpty() && it != "null" },
-                        preconditionsMet = self?.optBoolean("hasPreconditionsMet", true) ?: true,
-                        endsAtMs = parseTime(d.optString("endAt")),
-                        requiredSubs = d.optInt("requiredSubs"),
-                        currentSubs = self?.optInt("currentSubs") ?: 0,
-                        imageUrl = (d.optJSONArray("benefitEdges") ?: JSONArray()).objects().firstNotNullOfOrNull { e ->
-                            e.optJSONObject("benefit")?.optString("imageAssetURL")?.takeIf { it.startsWith("http") }
-                        },
-                    )
-                },
-            )
+        return campaigns.objects().map(::parseCampaign)
+    }
+
+    /**
+     * The campaign of [game] that [dropId] belongs to, from the (integrity-gated) dashboard and
+     * DropCampaignDetails. For drops Twitch counts but leaves out of the inventory.
+     */
+    suspend fun campaignForDrop(game: WatchedGame, dropId: String): Pair<InvCampaign, InvDrop>? {
+        val ids = dashboard(useIntegrity = true).campaigns.orEmpty()
+            .filter { it.status == "ACTIVE" && game.matches(it.gameId, it.game) }
+            .map { it.id }
+        for (id in ids) {
+            val root = gql(Queries.campaignDetails(prefs.userId.orEmpty(), id), useIntegrity = true)
+            val c = root.optJSONObject("data")?.optJSONObject("user")?.optJSONObject("dropCampaign") ?: continue
+            val campaign = parseCampaign(c)
+            campaign.drops.firstOrNull { it.id == dropId }?.let { return campaign to it }
         }
+        return null
+    }
+
+    private fun parseCampaign(c: JSONObject): InvCampaign {
+        val game = c.optJSONObject("game") ?: JSONObject()
+        val allow = c.optJSONObject("allow")
+        val allowEnabled = allow?.optBoolean("isEnabled", true) ?: false
+        return InvCampaign(
+            id = c.optString("id"),
+            name = c.optString("name"),
+            gameId = game.optString("id"),
+            gameName = game.optString("displayName").ifEmpty { game.optString("name") },
+            gameSlug = game.optString("slug").ifEmpty { null },
+            endsAtMs = parseTime(c.optString("endAt")),
+            startsAtMs = parseTime(c.optString("startAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
+            accountConnected = c.optJSONObject("self")?.optBoolean("isAccountConnected", true) ?: true,
+            linkUrl = c.optString("accountLinkURL").takeIf { it.startsWith("http") },
+            allowedLogins = if (allowEnabled) {
+                (allow?.optJSONArray("channels") ?: JSONArray()).objects().map { it.optString("name") }.filter { it.isNotEmpty() }
+            } else emptyList(),
+            drops = (c.optJSONArray("timeBasedDrops") ?: JSONArray()).objects().map { d ->
+                val self = d.optJSONObject("self")
+                InvDrop(
+                    id = d.optString("id"),
+                    name = d.optString("name"),
+                    required = d.optInt("requiredMinutesWatched"),
+                    minutes = self?.optInt("currentMinutesWatched") ?: 0,
+                    claimed = self?.optBoolean("isClaimed") ?: false,
+                    instanceId = self?.optString("dropInstanceID")?.takeIf { it.isNotEmpty() && it != "null" },
+                    preconditionsMet = self?.optBoolean("hasPreconditionsMet", true) ?: true,
+                    endsAtMs = parseTime(d.optString("endAt")),
+                    requiredSubs = d.optInt("requiredSubs"),
+                    currentSubs = self?.optInt("currentSubs") ?: 0,
+                    imageUrl = (d.optJSONArray("benefitEdges") ?: JSONArray()).objects().firstNotNullOfOrNull { e ->
+                        e.optJSONObject("benefit")?.optString("imageAssetURL")?.takeIf { it.startsWith("http") }
+                    },
+                )
+            },
+        )
     }
 
     /** Live, drops-enabled streams for a game (DropForge get_live_streams). */
@@ -623,6 +642,13 @@ internal object Queries {
         "DropCurrentSessionContext",
         "4d06b702d25d652afb9ef835d2a550031f1cf762b193523a92166f40ea3d142b",
         JSONObject().put("channelID", channelId).put("channelLogin", ""),
+    )
+
+    // TwitchDropsMiner constants.py CampaignDetails; channelLogin is the user's id there too.
+    fun campaignDetails(userId: String, campaignId: String) = persisted(
+        "DropCampaignDetails",
+        "039277bf98f3130929262cc7c6efd9c141ca3749cb6dca442fc8ead9a53f77c1",
+        JSONObject().put("channelLogin", userId).put("dropID", campaignId),
     )
 
     fun claimDrop(instanceId: String) = persisted(
