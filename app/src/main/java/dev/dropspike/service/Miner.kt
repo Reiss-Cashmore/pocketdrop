@@ -232,8 +232,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         // Twitch's inventory can leave out a campaign it is counting (Escape from Tarkov and Hearthstone
         // in Oct 2026 showed 356/480 and 63/420 in the session while missing from the inventory), so
         // while the game has nothing open there, the live session is read every minute and is the credit.
-        val live = if (started) null else runCatching { api.currentDrop(t.stream.channelId) }.getOrNull()
-            ?.takeIf { it.required > 0 && t.game.matches("", it.gameName ?: t.game.name) }
+        val session = if (started) null else runCatching { api.currentDrop(t.stream.channelId) }
+        val live = session?.getOrNull()?.takeIf { it.required > 0 && t.game.matches("", it.gameName ?: t.game.name) }
         val liveCredited = live != null && (slot.live?.let { it.dropId != live.dropId || live.minutes > it.minutes } ?: false)
         slot.live = live
         slot.credited = (slot.lastMinutes >= 0 && minutes > slot.lastMinutes) || liveCredited
@@ -260,9 +260,9 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         if (live != null && live.minutes >= live.required) claimLive(t.game, live)
         if (slot.withoutCredit == SESSION_CHECK_AT || slot.withoutCredit == SESSION_CHECK_AT * 2) {
             // Is Twitch still counting towards something else, e.g. a finished drop (the 4171/30 case)?
-            val session = runCatching { api.currentDrop(t.stream.channelId) }
-            DiagLog.i("miner: ${slot.withoutCredit} min without credit on ${t.stream.login}; Twitch current drop session: ${session.getOrNull() ?: session.exceptionOrNull()?.message ?: "none"}")
-            val s = session.getOrNull()
+            val check = session ?: runCatching { api.currentDrop(t.stream.channelId) }
+            DiagLog.i("miner: ${slot.withoutCredit} min without credit on ${t.stream.login}; Twitch current drop session: ${check.getOrNull() ?: check.exceptionOrNull()?.message ?: "none"}")
+            val s = check.getOrNull()
             val otherGame = s?.gameName?.let { !t.game.matches("", it) } == true
             if (s != null && (s.stuck || otherGame)) {
                 cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS
