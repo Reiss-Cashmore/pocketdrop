@@ -392,8 +392,10 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         !it.claimed && !it.done && it.preconditionsMet && it.required > 0 && it.endsAtMs > System.currentTimeMillis()
     }
 
+    // Only campaigns with something to watch for: a subscription-only campaign in the inventory
+    // (e.g. a chat badge) says nothing about whether the game's watch campaign is finished.
     private fun hasCampaign(campaigns: List<InvCampaign>, game: WatchedGame) =
-        campaigns.any { game.matches(it.gameId, it.gameName) }
+        campaigns.any { c -> game.matches(c.gameId, c.gameName) && c.drops.any { it.required > 0 } }
 
     private fun hasOpenDrops(campaigns: List<InvCampaign>, game: WatchedGame) =
         campaigns.any { game.matches(it.gameId, it.gameName) && openDrops(it).isNotEmpty() }
