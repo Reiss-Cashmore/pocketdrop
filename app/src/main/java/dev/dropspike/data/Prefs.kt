@@ -151,6 +151,17 @@ class Prefs(context: Context) {
         }.getOrDefault(emptyMap())
         set(v) = sp.edit { putString("not_counting", JSONObject(v).toString()) }
 
+    /**
+     * Games whose active campaigns are all earned (checked through DropCampaignDetails, since a fully
+     * claimed campaign leaves the inventory): game key → epoch ms until which the miner skips them.
+     */
+    var allEarned: Map<String, Long>
+        get() = runCatching {
+            val o = JSONObject(sp.getString("all_earned", null) ?: "{}")
+            o.keys().asSequence().associateWith { o.getLong(it) }
+        }.getOrDefault(emptyMap())
+        set(v) = sp.edit { putString("all_earned", JSONObject(v).toString()) }
+
     /** Material You wallpaper colours instead of the PocketDrop palette. */
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamic_color", false)

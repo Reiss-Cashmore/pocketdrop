@@ -217,7 +217,11 @@ private fun WatchedRow(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(game.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val notCounting = Miner.notCountingUntil(DropSpikeApp.instance.prefs, game)
-                if (notCounting != null) {
+                val allEarned = Miner.allEarnedUntil(DropSpikeApp.instance.prefs, game)
+                if (allEarned != null) {
+                    Pill("All drops earned", scheme.secondaryContainer, scheme.onSecondaryContainer)
+                    Hint("Checking again ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(allEarned))}")
+                } else if (notCounting != null) {
                     Box(
                         Modifier.clip(CircleShape).clickable(enabled = game.linkUrl != null) {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(game.linkUrl)))
