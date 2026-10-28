@@ -75,6 +75,8 @@ data class InvDrop(
     /** Subscriptions to the campaign's channels (subscribing or gifting) the drop needs; watching can't earn these. */
     val requiredSubs: Int = 0,
     val currentSubs: Int = 0,
+    /** Ids of the drop's rewards, matched against the account's rewards (gameEventDrops). */
+    val benefitIds: List<String> = emptyList(),
 ) {
     /** Earned only by subscribing, not by watching. */
     val subOnly get() = required == 0 && requiredSubs > 0
@@ -313,10 +315,21 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
      * dashboard and DropCampaignDetails. Includes campaigns Twitch leaves out of the inventory
      * (not started, fully claimed, or counted in the session but not listed).
      */
-    suspend fun gameCampaigns(game: WatchedGame): List<InvCampaign> =
-        dashboard(useIntegrity = true).campaigns.orEmpty()
+    suspend fun gameCampaigns(game: WatchedGame): List<InvCampaign> {
+        // DropCampaignDetails can come back without our progress (Once Human, Oct 2026: claimed drops
+        // read 0/60), so a drop whose rewards are on the account since the campaign started counts as
+        // claimed, as TwitchDropsMiner does with gameEventDrops.
+        val awarded = runCatching { rewards() }.getOrDefault(emptyList()).associate { it.id to it.lastAwardedAtMs }
+        return dashboard(useIntegrity = true).campaigns.orEmpty()
             .filter { it.status == "ACTIVE" && game.matches(it.gameId, it.game) }
             .mapNotNull { campaignDetails(it.id) }
+            .map { c ->
+                c.copy(drops = c.drops.map { d ->
+                    val got = d.benefitIds.isNotEmpty() && d.benefitIds.all { (awarded[it] ?: -1L) >= c.startsAtMs }
+                    if (got && !d.claimed) d.copy(claimed = true, minutes = maxOf(d.minutes, d.required)) else d
+                })
+            }
+    }
 
     private suspend fun campaignDetails(id: String): InvCampaign? {
         val root = gql(Queries.campaignDetails(prefs.userId.orEmpty(), id), useIntegrity = true)
@@ -353,6 +366,8 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                     endsAtMs = parseTime(d.optString("endAt")),
                     requiredSubs = d.optInt("requiredSubs"),
                     currentSubs = self?.optInt("currentSubs") ?: 0,
+                    benefitIds = (d.optJSONArray("benefitEdges") ?: JSONArray()).objects()
+                        .mapNotNull { e -> e.optJSONObject("benefit")?.optString("id")?.takeIf { it.isNotEmpty() } },
                     imageUrl = (d.optJSONArray("benefitEdges") ?: JSONArray()).objects().firstNotNullOfOrNull { e ->
                         e.optJSONObject("benefit")?.optString("imageAssetURL")?.takeIf { it.startsWith("http") }
                     },

@@ -89,6 +89,9 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     /** Game key → (fetched at, every active campaign with our progress); see gameDetails. */
     private val details = mutableMapOf<String, Pair<Long, List<InvCampaign>>>()
 
+    /** Game key → the last channel Twitch credited it on; some campaigns only count certain channels. */
+    private val creditedOn = mutableMapOf<String, String>()
+
     /** Game key → the live session last read for it, kept across channel switches. */
     private val lastLive = mutableMapOf<String, DropSession>()
 
@@ -261,6 +264,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                 )
             }
         }
+        if (slot.credited) creditedOn[key(t.game)] = t.stream.login
         slot.withoutCredit = if (slot.credited) 0 else slot.withoutCredit + 1
         if (started || live != null) uncounted.remove(key(t.game)) else uncounted[key(t.game)] = (uncounted[key(t.game)] ?: 0) + 1
         DiagLog.i(
@@ -292,7 +296,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             val known = gameDetails(t.game, maxAgeMs = 0)
             if (known != null) {
                 claimDetails(known)
-                if (known.none { openDrops(it).isNotEmpty() }) {
+                if (known.isNotEmpty() && known.none { openDrops(it).isNotEmpty() }) {
                     markAllEarned(t.game, known)
                     return "all drops earned"
                 }
@@ -515,6 +519,12 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                 DiagLog.i("miner: ${game.name}: $login is live but playing ${s.gameName}")
             }
             return null
+        }
+        // Escape from Tarkov (Oct 2026) counted on mrs_boocifer but stayed 0/0 on realkraftyy, and its
+        // campaign wasn't in the dashboard to say why: go back to the channel that last counted.
+        creditedOn[key(game)]?.let { login ->
+            val s = runCatching { api.streamInfo(login) }.getOrNull()
+            if (s != null && game.matches(s.gameId, s.gameName)) return s
         }
         val streams = api.liveStreams(game)
         DiagLog.i("miner: ${game.name} (slug ${game.slug}): ${streams.size} live drops-enabled channel(s)${streams.take(3).joinToString(prefix = if (streams.isEmpty()) "" else ": ") { "${it.login}/${it.viewers}" }}")
