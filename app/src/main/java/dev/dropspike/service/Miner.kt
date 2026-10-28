@@ -440,18 +440,15 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     }.ifEmpty { "none active" }
 
     /**
-     * The inventory plus campaigns found elsewhere that the home screen should show: ones with progress
-     * or being mined, with the live session's minutes on the drop it's counting.
+     * The inventory plus campaigns found elsewhere (e.g. Once Human's streamer-only ones, which Twitch's
+     * inventory only lists once they've started), with the live session's minutes on the drop it's counting.
      */
     private fun withDiscovered(inventory: List<InvCampaign>): List<InvCampaign> {
         val now = System.currentTimeMillis()
         val have = inventory.map { it.id }.toSet()
         val lives = slots.mapNotNull { it.live }.associateBy { it.dropId }
-        val mined = slots.map { it.target.game }
         val extra = discovered.values.filter { c ->
-            c.id !in have && c.endsAtMs > now &&
-                c.drops.any { d -> d.required > 0 && !d.claimed } &&
-                (c.drops.any { it.minutes > 0 || it.id in lives } || mined.any { it.matches(c.gameId, c.gameName) })
+            c.id !in have && c.endsAtMs > now && c.drops.any { d -> d.required > 0 && !d.claimed && d.endsAtMs > now }
         }.map { c ->
             c.copy(drops = c.drops.map { d -> lives[d.id]?.let { d.copy(minutes = maxOf(d.minutes, it.minutes)) } ?: d })
         }
