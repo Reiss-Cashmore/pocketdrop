@@ -390,6 +390,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             details.remove(key(WatchedGame(c.gameId, c.gameName, "")))
             discovered[c.id] = c.copy(drops = c.drops.map { if (it.id == d.id) it.copy(claimed = true) else it })
         }
+        return accepted
     }
 
     /**
