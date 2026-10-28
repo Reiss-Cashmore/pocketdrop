@@ -316,19 +316,36 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
      * (not started, fully claimed, or counted in the session but not listed).
      */
     suspend fun gameCampaigns(game: WatchedGame): List<InvCampaign> {
-        // DropCampaignDetails can come back without our progress (Once Human, Oct 2026: claimed drops
-        // read 0/60), so a drop whose rewards are on the account since the campaign started counts as
-        // claimed, as TwitchDropsMiner does with gameEventDrops.
-        val awarded = runCatching { rewards() }.getOrDefault(emptyList()).associate { it.id to it.lastAwardedAtMs }
-        return dashboard(useIntegrity = true).campaigns.orEmpty()
+        val ids = dashboard(useIntegrity = true).campaigns.orEmpty()
             .filter { it.status == "ACTIVE" && game.matches(it.gameId, it.game) }
-            .mapNotNull { campaignDetails(it.id) }
-            .map { c ->
-                c.copy(drops = c.drops.map { d ->
-                    val got = d.benefitIds.isNotEmpty() && d.benefitIds.all { (awarded[it] ?: -1L) >= c.startsAtMs }
-                    if (got && !d.claimed) d.copy(claimed = true, minutes = maxOf(d.minutes, d.required)) else d
-                })
-            }
+            .map { it.id }
+        return withProgress(ids.mapNotNull { campaignDetails(it) })
+    }
+
+    /**
+     * The campaigns a live channel counts towards (DropsHighlightService_AvailableDrops, as
+     * TwitchDropsMiner's channel.py), with our progress. Finds campaigns the dashboard leaves out
+     * (Escape from Tarkov and The Witcher 3 in Oct 2026 counted in the session but weren't listed).
+     */
+    suspend fun channelCampaigns(channelId: String): List<InvCampaign> {
+        val root = gql(Queries.availableDrops(channelId), useIntegrity = true)
+        val ids = (root.optJSONObject("data")?.optJSONObject("channel")?.optJSONArray("viewerDropCampaigns") ?: JSONArray())
+            .objects().map { it.optString("id") }.filter { it.isNotEmpty() }.distinct()
+        return withProgress(ids.mapNotNull { campaignDetails(it) })
+    }
+
+    // DropCampaignDetails can come back without our progress (Once Human, Oct 2026: claimed drops
+    // read 0/60), so a drop whose rewards are on the account since the campaign started counts as
+    // claimed, as TwitchDropsMiner does with gameEventDrops.
+    private suspend fun withProgress(campaigns: List<InvCampaign>): List<InvCampaign> {
+        if (campaigns.isEmpty()) return campaigns
+        val awarded = runCatching { rewards() }.getOrDefault(emptyList()).associate { it.id to it.lastAwardedAtMs }
+        return campaigns.map { c ->
+            c.copy(drops = c.drops.map { d ->
+                val got = d.benefitIds.isNotEmpty() && d.benefitIds.all { (awarded[it] ?: -1L) >= c.startsAtMs }
+                if (got && !d.claimed) d.copy(claimed = true, minutes = maxOf(d.minutes, d.required)) else d
+            })
+        }
     }
 
     private suspend fun campaignDetails(id: String): InvCampaign? {
@@ -662,6 +679,13 @@ internal object Queries {
         "DropCampaignDetails",
         "039277bf98f3130929262cc7c6efd9c141ca3749cb6dca442fc8ead9a53f77c1",
         JSONObject().put("channelLogin", userId).put("dropID", campaignId),
+    )
+
+    // TwitchDropsMiner constants.py AvailableDrops.
+    fun availableDrops(channelId: String) = persisted(
+        "DropsHighlightService_AvailableDrops",
+        "782dad0f032942260171d2d80a654f88bdd0c5a9dddc392e9bc92218a0f42d20",
+        JSONObject().put("channelID", channelId),
     )
 
     fun claimDrop(instanceId: String) = persisted(
