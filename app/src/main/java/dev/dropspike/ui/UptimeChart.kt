@@ -43,7 +43,7 @@ import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
 
-/** Minute states as drawn. [Missed] is derived: a gap inside a session where no tick ran. */
+/** Minute states as drawn. [Missed] is derived: a gap inside a session where no tick ran (not a pause after idling). */
 private enum class Slot(val label: String, val color: Color, val height: Float) {
     // Fixed status palette (good / warning / critical), never reused for anything else.
     // Height is a second channel so the chart reads without relying on red vs green.
@@ -205,9 +205,10 @@ private fun buildBuckets(entries: List<MinuteEntry>, window: Window, now: Long, 
     }
     sorted.zipWithNext().forEach { (a, b) ->
         val gap = b.atMs - a.atMs
-        if (gap > 90_000 && gap < 3 * 60 * MINUTE) markMissed(a.atMs, b.atMs)
+        // After idle minutes the service stops on purpose until the next wake check: not missed.
+        if (gap > 90_000 && gap < 3 * 60 * MINUTE && a.status != MinuteStatus.Idle) markMissed(a.atMs, b.atMs)
     }
-    sorted.lastOrNull()?.let { if (running && now - it.atMs > 90_000) markMissed(it.atMs, now) }
+    sorted.lastOrNull()?.let { if (running && it.status != MinuteStatus.Idle && now - it.atMs > 90_000) markMissed(it.atMs, now) }
 
     return (0 until window.minutes step window.bucketMinutes).map { b0 ->
         val range = b0 until minOf(b0 + window.bucketMinutes, window.minutes)

@@ -162,6 +162,26 @@ class Prefs(context: Context) {
         }.getOrDefault(emptyMap())
         set(v) = sp.edit { putString("all_earned", JSONObject(v).toString()) }
 
+    /**
+     * Games whose open campaigns only count on certain channels (e.g. Once Human's streamer drops):
+     * game key → (epoch ms the restriction holds until, allowed logins). Lets the background wake check,
+     * which starts with nothing cached, look only at those channels.
+     */
+    var channelOnly: Map<String, Pair<Long, List<String>>>
+        get() = runCatching {
+            val o = JSONObject(sp.getString("channel_only", null) ?: "{}")
+            o.keys().asSequence().associateWith { k ->
+                val e = o.getJSONObject(k)
+                val logins = e.getJSONArray("logins")
+                e.getLong("until") to List(logins.length()) { logins.getString(it) }
+            }
+        }.getOrDefault(emptyMap())
+        set(v) = sp.edit {
+            putString("channel_only", JSONObject().apply {
+                v.forEach { (k, e) -> put(k, JSONObject().put("until", e.first).put("logins", org.json.JSONArray(e.second))) }
+            }.toString())
+        }
+
     /** Material You wallpaper colours instead of the PocketDrop palette. */
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamic_color", false)

@@ -575,7 +575,22 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         // Campaigns missing from the inventory come from gameDetails, e.g. Once Human's streamer-only ones.
         val open = campaigns.filter { game.matches(it.gameId, it.gameName) && openDrops(it).isNotEmpty() }
             .ifEmpty { details[key(game)]?.second.orEmpty().filter { openDrops(it).isNotEmpty() } }
-        val acl = if (open.any { it.allowedLogins.isEmpty() }) emptyList() else open.flatMap { it.allowedLogins }.distinct()
+        val k = key(game)
+        val now = System.currentTimeMillis()
+        val acl = if (open.isEmpty()) {
+            // Nothing cached (e.g. the wake check's fresh miner): use the restriction seen last time.
+            prefs.channelOnly[k]?.takeIf { it.first > now }?.second.orEmpty()
+        } else {
+            val list = if (open.any { it.allowedLogins.isEmpty() }) emptyList() else open.flatMap { it.allowedLogins }.distinct()
+            val stored = prefs.channelOnly
+            if (list.isNotEmpty()) {
+                val until = open.minOf { it.endsAtMs }
+                if (stored[k] != until to list) prefs.channelOnly = stored + (k to (until to list))
+            } else if (k in stored) {
+                prefs.channelOnly = stored - k
+            }
+            list
+        }
         if (acl.isNotEmpty()) {
             DiagLog.i("miner: ${game.name}: campaign restricted to ${acl.size} channel(s), checking ${acl.take(15).joinToString()}")
             for (login in acl.take(15)) {

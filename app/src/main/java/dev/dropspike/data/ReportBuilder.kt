@@ -172,7 +172,7 @@ object ReportBuilder {
         for (e in recent) {
             previous?.let { p ->
                 val gap = e.atMs - p.atMs
-                if (gap > 90_000) line("        … ${gap / MINUTE} min gap ${if (gap < 3 * 60 * MINUTE) "(MISSED: service not ticking)" else "(stopped)"} …")
+                if (gap > 90_000) line("        … ${gap / MINUTE} min gap ${if (p.status == MinuteStatus.Idle) "(paused: nothing to mine)" else if (gap < 3 * 60 * MINUTE) "(MISSED: service not ticking)" else "(stopped)"} …")
             }
             line("${hm.format(Date(e.atMs))}  ${e.status.name.padEnd(8)}  ${e.note}")
             previous = e
@@ -188,9 +188,9 @@ object ReportBuilder {
         }
         entries.zipWithNext().forEach { (a, b) ->
             val gap = b.atMs - a.atMs
-            if (gap > 90_000 && gap < 3 * 60 * MINUTE) fill(a.atMs, b.atMs)
+            if (gap > 90_000 && gap < 3 * 60 * MINUTE && a.status != MinuteStatus.Idle) fill(a.atMs, b.atMs)
         }
-        entries.lastOrNull()?.let { if (running && now - it.atMs > 90_000) fill(it.atMs, now) }
+        entries.lastOrNull()?.let { if (running && it.status != MinuteStatus.Idle && now - it.atMs > 90_000) fill(it.atMs, now) }
         return out
     }
 
