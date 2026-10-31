@@ -29,6 +29,7 @@ data class Campaign(
     val gameId: String = "",
     val gameSlug: String? = null,
     val endsAtMs: Long = Long.MAX_VALUE,
+    val startsAtMs: Long = 0,
     /** Where to link the game account, when the campaign needs one. */
     val linkUrl: String? = null,
 )
@@ -111,6 +112,10 @@ data class WatchedGame(
     /** Every active campaign for this game needs a linked game account, and none is linked. */
     val needsLink: Boolean = false,
     val linkUrl: String? = null,
+    /** When this game's soonest-ending active campaign ends; 0 if unknown. For sorting the picker. */
+    val endsAtMs: Long = 0,
+    /** When this game's newest active campaign started; 0 if unknown. */
+    val startsAtMs: Long = 0,
 ) {
     /** Twitch box art by game id (IGDB-backed games use the `_IGDB` variant). */
     fun boxArt(width: Int = 144, height: Int = 192): List<String> = if (id.isEmpty()) emptyList() else listOf(
@@ -267,6 +272,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 gameId = c.optJSONObject("game")?.optString("id").orEmpty(),
                 gameSlug = c.optJSONObject("game")?.optString("slug")?.ifEmpty { null },
                 endsAtMs = parseTime(c.optString("endAt")),
+                startsAtMs = parseTime(c.optString("startAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
                 linkUrl = c.optString("accountLinkURL").takeIf { it.isNotBlank() && it != "null" },
                 status = c.optString("status"),
                 linked = c.optJSONObject("self")?.takeIf { it.has("isAccountConnected") }?.optBoolean("isAccountConnected"),

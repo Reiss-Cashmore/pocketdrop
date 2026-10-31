@@ -25,6 +25,8 @@ object GameCatalog {
                         c.gameId, c.game, c.gameSlug ?: slugOf(c.game), cs.size,
                         needsLink = needsLink,
                         linkUrl = if (needsLink) cs.firstNotNullOfOrNull { it.linkUrl } else null,
+                        endsAtMs = cs.minOf { it.endsAtMs },
+                        startsAtMs = cs.maxOf { it.startsAtMs },
                     )
                 }
                 ?: throw IllegalStateException("Twitch hid the campaign list (${result.errors.joinToString().ifEmpty { "integrity check failed" }})")
@@ -33,12 +35,19 @@ object GameCatalog {
         }
         val fromInventory = runCatching { api.inventoryCampaigns() }.getOrDefault(emptyList())
             .filter { it.endsAtMs > now }
-            .map { WatchedGame(it.gameId, it.gameName, it.gameSlug ?: slugOf(it.gameName)) }
+            .map { WatchedGame(it.gameId, it.gameName, it.gameSlug ?: slugOf(it.gameName), endsAtMs = it.endsAtMs, startsAtMs = it.startsAtMs) }
 
         val merged = (fromDashboard + fromInventory)
             .groupBy { it.id.ifEmpty { it.name.lowercase() } }
             // Inventory entries are in progress, so they are linked: they override "needs link".
-            .map { (_, gs) -> gs.maxBy { it.campaigns }.let { best -> if (gs.any { it.campaigns == 0 }) best.copy(needsLink = false) else best } }
+            .map { (_, gs) ->
+                gs.maxBy { it.campaigns }
+                    .let { best -> if (gs.any { it.campaigns == 0 }) best.copy(needsLink = false) else best }
+                    .copy(
+                        endsAtMs = gs.filter { it.endsAtMs > 0 }.minOfOrNull { it.endsAtMs } ?: 0,
+                        startsAtMs = gs.maxOf { it.startsAtMs },
+                    )
+            }
             .sortedBy { it.name.lowercase() }
         prefs.gameCatalog = merged
         prefs.gameCatalogAt = now

@@ -182,6 +182,11 @@ class Prefs(context: Context) {
             }.toString())
         }
 
+    /** Sort order of the game picker (a GamePicker sort name). */
+    var pickerSort: String
+        get() = sp.getString("picker_sort", null) ?: ""
+        set(v) = sp.edit { putString("picker_sort", v) }
+
     /** Material You wallpaper colours instead of the PocketDrop palette. */
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamic_color", false)
@@ -227,7 +232,8 @@ class Prefs(context: Context) {
     private fun encodeGames(games: List<WatchedGame>) = JSONArray().apply {
         games.forEach { put(
                 JSONObject().put("id", it.id).put("name", it.name).put("slug", it.slug).put("campaigns", it.campaigns)
-                    .put("needsLink", it.needsLink).put("linkUrl", it.linkUrl ?: ""),
+                    .put("needsLink", it.needsLink).put("linkUrl", it.linkUrl ?: "")
+                    .put("endsAt", it.endsAtMs).put("startsAt", it.startsAtMs),
             ) }
     }.toString()
 
@@ -238,6 +244,7 @@ class Prefs(context: Context) {
                 WatchedGame(
                     j.optString("id"), j.optString("name"), j.optString("slug"), j.optInt("campaigns"),
                     needsLink = j.optBoolean("needsLink"), linkUrl = j.optString("linkUrl").ifEmpty { null },
+                    endsAtMs = j.optLong("endsAt"), startsAtMs = j.optLong("startsAt"),
                 )
             }
         }

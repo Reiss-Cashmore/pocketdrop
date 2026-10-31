@@ -45,6 +45,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -83,6 +85,34 @@ import java.text.DateFormat
 import java.util.Date
 
 private val WAKE_CHOICES = listOf(0 to "Off", 30 to "30 min", 60 to "1 h", 120 to "2 h")
+
+/** Game picker orders. Ties fall back to name; unknown dates (an old cached list) go last. */
+private enum class PickerSort(val label: String, val comparator: Comparator<WatchedGame>) {
+    // Games you can actually earn from first; ones needing an account link last.
+    Recommended("Recommended", compareBy { it.needsLink }),
+    Name("Name A–Z", Comparator { _, _ -> 0 }),
+    EndingSoon("Ending soon", compareBy { if (it.endsAtMs > 0) it.endsAtMs else Long.MAX_VALUE }),
+    Newest("Newest", compareByDescending { it.startsAtMs }),
+    MostCampaigns("Most campaigns", compareByDescending { it.campaigns }),
+}
+
+private const val DAY_MS = 24 * 60 * 60_000L
+
+/** "Ends in 3 days" / "Started today" style hint for a tile under the date-based sorts. */
+private fun dateHint(game: WatchedGame, sort: PickerSort): String? {
+    val now = System.currentTimeMillis()
+    return when (sort) {
+        PickerSort.EndingSoon -> game.endsAtMs.takeIf { it in (now + 1)..(now + 365 * DAY_MS) }?.let {
+            val days = (it - now) / DAY_MS
+            if (days == 0L) "Ends today" else "Ends in $days day${if (days == 1L) "" else "s"}"
+        }
+        PickerSort.Newest -> game.startsAtMs.takeIf { it in 1..now }?.let {
+            val days = (now - it) / DAY_MS
+            if (days == 0L) "Started today" else "Started $days day${if (days == 1L) "" else "s"} ago"
+        }
+        else -> null
+    }
+}
 
 @Composable
 fun GamesScreen(vm: MainViewModel) {
@@ -269,13 +299,17 @@ private fun WatchedRow(
 private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var onlySelected by remember { mutableStateOf(false) }
+    val prefs = DropSpikeApp.instance.prefs
+    var sort by remember { mutableStateOf(PickerSort.entries.firstOrNull { it.name == prefs.pickerSort } ?: PickerSort.Recommended) }
+    var sortMenu by remember { mutableStateOf(false) }
     val haptics = rememberHaptics()
     val watched = state.watched.map { it.slug }.toSet()
-    // Games you can actually earn from first; ones needing an account link last.
+    // The catalog arrives sorted by name, and sortedWith is stable, so ties stay alphabetical.
     val shown = state.catalog
         .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
         .filter { !onlySelected || it.slug in watched }
-        .sortedBy { it.needsLink }
+        .sortedBy { it.name.lowercase() }
+        .sortedWith(sort.comparator)
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Scaffold(
@@ -307,9 +341,34 @@ private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Un
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.size(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         FilterChip(selected = !onlySelected, onClick = { onlySelected = false }, label = { Text("All ${state.catalog.size}") })
                         FilterChip(selected = onlySelected, onClick = { onlySelected = true }, label = { Text("Selected ${watched.size}") })
+                        Spacer(Modifier.weight(1f))
+                        Box {
+                            TextButton(onClick = { haptics.tick(); sortMenu = true }) {
+                                Icon(AppIcons.Sort, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(sort.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                                PickerSort.entries.forEach { s ->
+                                    DropdownMenuItem(
+                                        text = { Text(s.label) },
+                                        onClick = {
+                                            haptics.tick()
+                                            sort = s
+                                            prefs.pickerSort = s.name
+                                            sortMenu = false
+                                            // A list cached before dates were stored can't sort by them yet.
+                                            val dated = s == PickerSort.EndingSoon || s == PickerSort.Newest
+                                            if (dated && !state.busy && state.catalog.none { it.endsAtMs > 0 }) vm.refreshGameCatalog()
+                                        },
+                                        trailingIcon = { if (s == sort) Icon(Icons.Default.Check, "Selected") },
+                                    )
+                                }
+                            }
+                        }
                     }
                     Spacer(Modifier.size(4.dp))
                     when {
@@ -329,7 +388,7 @@ private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Un
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         items(shown, key = { it.slug }) { g ->
-                            GameTile(g, selected = g.slug in watched, onToggle = { haptics.tick(); vm.toggleWatched(g) }, modifier = Modifier.animateItem())
+                            GameTile(g, selected = g.slug in watched, detail = dateHint(g, sort), onToggle = { haptics.tick(); vm.toggleWatched(g) }, modifier = Modifier.animateItem())
                         }
                     }
                 }
@@ -339,7 +398,7 @@ private fun GamePicker(state: GamesState, vm: MainViewModel, onDismiss: () -> Un
 }
 
 @Composable
-private fun GameTile(game: WatchedGame, selected: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+private fun GameTile(game: WatchedGame, selected: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, detail: String? = null) {
     val scheme = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val borderColor by animateColorAsState(if (selected) scheme.primary else Color.Transparent, tween(MotionTokens.SHORT), label = "border")
@@ -389,5 +448,6 @@ private fun GameTile(game: WatchedGame, selected: Boolean, onToggle: () -> Unit,
             game.needsLink -> Text("Needs account link", style = MaterialTheme.typography.labelSmall, color = scheme.error, textAlign = TextAlign.Center)
             game.campaigns > 0 -> Text("${game.campaigns} campaign${if (game.campaigns == 1) "" else "s"}", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
         }
+        detail?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, textAlign = TextAlign.Center) }
     }
 }
