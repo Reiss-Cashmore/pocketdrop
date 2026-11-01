@@ -99,6 +99,7 @@ dependencies {
             libs.bouncycastle.bcutil,
             libs.apache.httpclient,
             libs.commons.lang3,
+            libs.guava,
         ).forEach { add("androidLintTool", it) }
     }
 }

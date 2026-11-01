@@ -15,6 +15,7 @@ buildscript {
             classpath(libs.commons.lang3)
             classpath(libs.jdom2)
             classpath(libs.jose4j)
+            classpath(libs.guava)
         }
     }
 }
