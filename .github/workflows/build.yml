@@ -66,7 +66,7 @@ jobs:
         run: ./gradlew buildEnvironment :app:dependencies --write-locks --quiet > /dev/null
 
       - name: Scan dependencies (OSV)
-        uses: google/osv-scanner-action/osv-scanner-action@v2.6.0
+        uses: google/osv-scanner-action/osv-scanner-action@v2.7.0
         continue-on-error: true
         with:
           scan-args: |-
