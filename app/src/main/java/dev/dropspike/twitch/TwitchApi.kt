@@ -404,8 +404,20 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         liveStreams(WatchedGame(game.gameId, game.gameName, game.gameSlug ?: slugOf(game.gameName)), limit)
 
     suspend fun liveStreams(game: WatchedGame, limit: Int = 20): List<LiveStream> {
-        val slug = game.slug
-        val root = gql(Queries.gameDirectory(slug, limit), useIntegrity = false)
+        val nameKey = game.name.lowercase()
+        val known = resolvedSlugs[nameKey]
+        val slug = known?.second ?: game.slug
+        var root = gql(Queries.gameDirectory(slug, limit), useIntegrity = false)
+        // No game behind the slug: the name-derived slug is wrong (Overwatch, renamed from Overwatch 2,
+        // kept its old slug), so ask Twitch for the real one by name. Failures retry after a while.
+        if (root.optJSONObject("data")?.optJSONObject("game") == null && game.name.isNotBlank() &&
+            (known == null || (known.second == null && System.currentTimeMillis() - known.first > SLUG_RETRY_MS))
+        ) {
+            val real = runCatching { gameSlug(game.name) }.getOrNull()
+            resolvedSlugs[nameKey] = System.currentTimeMillis() to real
+            DiagLog.i("games: ${game.name}: no Twitch category at /$slug; " + (real?.let { "its slug is $it" } ?: "couldn't look up its slug"))
+            if (real != null && real != slug) root = gql(Queries.gameDirectory(real, limit), useIntegrity = false)
+        }
         val edges = root.optJSONObject("data")?.optJSONObject("game")?.optJSONObject("streams")?.optJSONArray("edges")
             ?: return emptyList()
         return edges.objects().mapNotNull { e ->
@@ -422,6 +434,11 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             )
         }
     }
+
+    /** A game's directory slug from its name (DirectoryGameRedirect, as TwitchDropsMiner's SlugRedirect). */
+    private suspend fun gameSlug(name: String): String? =
+        gql(Queries.gameSlug(name), useIntegrity = false)
+            .optJSONObject("data")?.optJSONObject("game")?.optString("slug")?.takeIf { it.isNotBlank() }
 
     /** One channel's live stream, or null if offline (GetStreamInfo). */
     suspend fun streamInfo(login: String): LiveStream? {
@@ -621,6 +638,10 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
 
     companion object {
         private val JSON = "application/json".toMediaType()
+
+        /** Game name (lowercase) → (when looked up, real directory slug or null if the lookup failed). */
+        private val resolvedSlugs = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String?>>()
+        private const val SLUG_RETRY_MS = 30 * 60_000L
     }
 }
 
@@ -643,6 +664,12 @@ internal object Queries {
         "ViewerDropsDashboard",
         "c16bb890cc8ce7647a96ee69cd313d423a378a3dedadf630a1017cde18975feb",
         JSONObject().put("fetchRewardCampaigns", false),
+    )
+
+    fun gameSlug(name: String) = persisted(
+        "DirectoryGameRedirect",
+        "1f0300090caceec51f33c5e20647aceff9017f740f223c3c532ba6fa59f6b6cc",
+        JSONObject().put("name", name),
     )
 
     fun gameDirectory(slug: String, limit: Int) = persisted(
