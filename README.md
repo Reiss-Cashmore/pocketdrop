@@ -18,15 +18,16 @@ It never plays any video.
 
 </div>
 
-<!-- Screenshots: docs/screenshots/{home,campaign,games,rewards,settings}.png
 <p align="center">
-  <img src="docs/screenshots/home.png" width="19%" alt="Home">
-  <img src="docs/screenshots/campaign.png" width="19%" alt="Campaign details">
-  <img src="docs/screenshots/games.png" width="19%" alt="Games">
-  <img src="docs/screenshots/rewards.png" width="19%" alt="Rewards">
-  <img src="docs/screenshots/settings.png" width="19%" alt="Settings">
+  <img src="docs/screenshots/home.png" width="30%" alt="Home: mining Borderlands 4, with the uptime chart">
+  <img src="docs/screenshots/in-progress.png" width="30%" alt="Campaigns in progress, with drop progress and account-link warnings">
+  <img src="docs/screenshots/campaign.png" width="30%" alt="Campaign details: every drop with its reward and time left">
 </p>
--->
+<p align="center">
+  <img src="docs/screenshots/games.png" width="30%" alt="Games: the watch list, mined top to bottom">
+  <img src="docs/screenshots/picker.png" width="30%" alt="Choosing games from a box-art grid of every active campaign">
+  <img src="docs/screenshots/rewards.png" width="30%" alt="Rewards: drops claimed by PocketDrop and everything on the account">
+</p>
 
 ## Why
 
