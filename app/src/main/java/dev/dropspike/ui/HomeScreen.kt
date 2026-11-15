@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -27,8 +28,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -76,13 +80,19 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
     val uptime by UptimeLog.entries.collectAsStateWithLifecycle()
     val perms = rememberPermissionState()
     var openCampaign by rememberSaveable { mutableStateOf<String?>(null) }
+    var subsExpanded by rememberSaveable { mutableStateOf(false) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { if (!MinerState.status.value.running) vm.refreshInventory() }
 
     // While mining, the service already reads the inventory every minute.
     val campaigns = if (status.running && status.campaigns.isNotEmpty()) status.campaigns else inventory.campaigns
     val now = System.currentTimeMillis()
+    // Campaigns with nothing to watch for, only drops earned by subscribing, go in their own section.
+    val subscription = campaigns
+        .filter { c -> c.endsAtMs > now && c.drops.none { it.isOpen(now) } && c.drops.any { it.subOnly && !it.claimed && it.endsAtMs > now } }
+        .sortedWith(compareByDescending<InvCampaign> { c -> c.drops.any { it.subOnly && it.done && !it.claimed } }.thenBy { it.endsAtMs })
+    val subIds = subscription.map { it.id }.toSet()
     val active = campaigns
-        .filter { c -> c.endsAtMs > now && c.drops.any { it.isOpen(now) || (it.done && !it.claimed) } }
+        .filter { c -> c.id !in subIds && c.endsAtMs > now && c.drops.any { it.isOpen(now) || (it.done && !it.claimed) } }
         .sortedWith(
             compareByDescending<InvCampaign> { status.now?.game?.matches(it.gameId, it.gameName) == true }
                 .thenByDescending { c -> c.drops.filter { it.isOpen(now) }.maxOfOrNull { it.minutes.toFloat() / it.required } ?: 0f },
@@ -133,10 +143,20 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
         items(active, key = { it.id }) { c ->
             CampaignCard(c, mining = isMining(c), onClick = { openCampaign = c.id }, modifier = Modifier.animateItem())
         }
+        if (subscription.isNotEmpty()) {
+            item(key = "subs-header") {
+                SubscriptionHeader(subscription, subsExpanded, onToggle = { subsExpanded = !subsExpanded }, modifier = Modifier.animateItem())
+            }
+            if (subsExpanded) {
+                items(subscription, key = { "sub-" + it.id }) { c ->
+                    CampaignCard(c, mining = false, onClick = { openCampaign = c.id }, modifier = Modifier.animateItem())
+                }
+            }
+        }
     }
 
     // Looked up on every recomposition so the sheet's progress stays live while it's open.
-    active.firstOrNull { it.id == openCampaign }?.let { c ->
+    (active + subscription).firstOrNull { it.id == openCampaign }?.let { c ->
         CampaignSheet(
             c = c,
             miningNow = isMining(c),
@@ -422,6 +442,56 @@ private fun SetupChecklist(games: GamesState, perms: PermissionState, onOpenGame
     }
 }
 
+/**
+ * Header of the subscription-drops section: always shows a summary (campaigns, drops, how many are
+ * ready to claim, which games), and expands to the campaign cards when tapped.
+ */
+@Composable
+private fun SubscriptionHeader(campaigns: List<InvCampaign>, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    val drops = campaigns.flatMap { c -> c.drops.filter { it.subOnly && !it.claimed } }
+    val ready = drops.count { it.done }
+    val minSubs = drops.filter { !it.done }.minOfOrNull { it.requiredSubs - it.currentSubs }
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
+    Surface(
+        onClick = onToggle,
+        shape = MaterialTheme.shapes.large,
+        color = scheme.surfaceContainerLow,
+        modifier = modifier.fillMaxWidth().padding(top = 8.dp),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(scheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Star, null, tint = scheme.onSecondaryContainer, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Subscription drops", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${campaigns.size} campaign${if (campaigns.size == 1) "" else "s"} · ${drops.size} drop${if (drops.size == 1) "" else "s"}" +
+                        (if (ready > 0) " · $ready ready to claim" else "") +
+                        (minSubs?.let { " · next needs $it sub${if (it == 1) "" else "s"}" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+                Text(
+                    campaigns.map { it.gameName }.distinct().joinToString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text("Earned by subscribing or gifting, not by watching", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+            }
+            Icon(
+                Icons.Default.KeyboardArrowDown,
+                if (expanded) "Collapse subscription drops" else "Expand subscription drops",
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.graphicsLayer { rotationZ = rotation },
+            )
+        }
+    }
+}
+
 /** A campaign at a glance: its next drop and time left. Tap for the full details sheet. */
 @Composable
 private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -430,6 +500,7 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
     val game = remember(c.gameId) { WatchedGame(c.gameId, c.gameName, c.gameSlug ?: slugOf(c.gameName)) }
     val next = c.drops.filter { it.isOpen(now) }.maxByOrNull { it.minutes.toFloat() / it.required }
         ?: c.drops.firstOrNull { it.done && !it.claimed }
+        ?: c.drops.firstOrNull { it.subOnly && !it.claimed }
     val claimed = c.drops.count { it.claimed }
     val interaction = remember { MutableInteractionSource() }
     val container by animateColorAsState(if (mining) scheme.surfaceContainerHigh else scheme.surfaceContainerLow, label = "card")
@@ -472,6 +543,7 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
                                 when {
                                     d.done && Miner.isStuck(DropSpikeApp.instance.prefs, d.id) -> "Claim on Twitch"
                                     d.done -> "Claiming"
+                                    d.subOnly && d.currentSubs > 0 -> "${d.currentSubs}/${d.requiredSubs} subs"
                                     d.subOnly -> "Needs ${d.requiredSubs} sub${if (d.requiredSubs == 1) "" else "s"}"
                                     else -> "${d.minutes}/${d.required} min"
                                 },
@@ -480,7 +552,11 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
                             )
                         }
                         Progress(
-                            if (d.required > 0) d.minutes.toFloat() / d.required else 0f,
+                            when {
+                                d.required > 0 -> d.minutes.toFloat() / d.required
+                                d.subOnly -> if (d.done) 1f else d.currentSubs.toFloat() / d.requiredSubs
+                                else -> 0f
+                            },
                             color = if (d.done) StatusColors.good else scheme.primary,
                         )
                     }
