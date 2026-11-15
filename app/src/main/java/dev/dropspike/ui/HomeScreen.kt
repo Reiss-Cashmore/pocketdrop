@@ -477,7 +477,7 @@ private fun SubscriptionHeader(campaigns: List<InvCampaign>, expanded: Boolean, 
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Subscription drops", style = MaterialTheme.typography.titleMedium)
+                Text("Channel campaigns", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "${campaigns.size} campaign${if (campaigns.size == 1) "" else "s"} · ${drops.size} drop${if (drops.size == 1) "" else "s"}" +
                         (if (ready > 0) " · $ready ready to claim" else "") +
@@ -492,11 +492,11 @@ private fun SubscriptionHeader(campaigns: List<InvCampaign>, expanded: Boolean, 
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text("Earned by subscribing or gifting, not by watching", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+                Text("Streamers' own rewards: subs, gifting and watch time on their channel", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
             }
             Icon(
                 Icons.Default.KeyboardArrowDown,
-                if (expanded) "Collapse subscription drops" else "Expand subscription drops",
+                if (expanded) "Collapse channel campaigns" else "Expand channel campaigns",
                 tint = scheme.onSurfaceVariant,
                 modifier = Modifier.graphicsLayer { rotationZ = rotation },
             )
