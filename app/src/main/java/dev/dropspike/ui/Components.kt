@@ -167,10 +167,11 @@ internal fun Pill(text: String, container: Color, content: Color, dot: Color? = 
 
 /** Game box art, trying Twitch's IGDB art first, then the plain variant, then an initial. */
 @Composable
-internal fun GameArt(game: WatchedGame, width: Dp, modifier: Modifier = Modifier) {
+internal fun GameArt(game: WatchedGame, width: Dp, modifier: Modifier = Modifier, fallback: String? = null) {
     val height = width * 4 / 3
-    val urls = remember(game.id) { game.boxArt(144, 192) }
-    var attempt by remember(game.id) { mutableIntStateOf(0) }
+    // Box art first; when there's none (e.g. a channel's sub-only campaign with no game), the fallback.
+    val urls = remember(game.id, fallback) { game.boxArt(144, 192) + listOfNotNull(fallback) }
+    var attempt by remember(game.id, fallback) { mutableIntStateOf(0) }
     Box(
         modifier
             .size(width, height)

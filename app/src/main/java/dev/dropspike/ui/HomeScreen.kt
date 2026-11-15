@@ -167,6 +167,14 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
     }
 }
 
+/** The campaign's game, or for a channel campaign with no game, its channel or name. */
+internal val InvCampaign.displayGame: String
+    get() = gameName.ifBlank { allowedLogins.firstOrNull() ?: name }
+
+/** A picture for campaigns without box art: the first drop's reward image. */
+internal val InvCampaign.dropArt: String?
+    get() = drops.firstNotNullOfOrNull { it.imageUrl }
+
 private fun InvDrop.isOpen(now: Long) = !claimed && !done && required > 0 && endsAtMs > now
 
 private enum class HeroMode { Paused, Mining, Searching, Stopped }
@@ -474,7 +482,7 @@ private fun SubscriptionHeader(campaigns: List<InvCampaign>, expanded: Boolean, 
                     color = scheme.onSurfaceVariant,
                 )
                 Text(
-                    campaigns.map { it.gameName }.distinct().joinToString(),
+                    campaigns.map { it.displayGame }.distinct().joinToString(),
                     style = MaterialTheme.typography.labelSmall,
                     color = scheme.onSurfaceVariant,
                     maxLines = 1,
@@ -497,7 +505,7 @@ private fun SubscriptionHeader(campaigns: List<InvCampaign>, expanded: Boolean, 
 private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     val now = System.currentTimeMillis()
-    val game = remember(c.gameId) { WatchedGame(c.gameId, c.gameName, c.gameSlug ?: slugOf(c.gameName)) }
+    val game = remember(c.gameId, c.name) { WatchedGame(c.gameId, c.displayGame, c.gameSlug ?: slugOf(c.gameName)) }
     val next = c.drops.filter { it.isOpen(now) }.maxByOrNull { it.minutes.toFloat() / it.required }
         ?: c.drops.firstOrNull { it.done && !it.claimed }
         ?: c.drops.firstOrNull { it.subOnly && !it.claimed }
@@ -513,11 +521,11 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                GameArt(game, 52.dp)
+                GameArt(game, 52.dp, fallback = c.dropArt)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(c.gameName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Text(c.displayGame, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         if (mining) {
                             Spacer(Modifier.width(8.dp))
                             Pill("Now", scheme.tertiaryContainer, scheme.onTertiaryContainer, dot = StatusColors.good, live = true)
