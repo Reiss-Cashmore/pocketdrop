@@ -86,9 +86,13 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
     // While mining, the service already reads the inventory every minute.
     val campaigns = if (status.running && status.campaigns.isNotEmpty()) status.campaigns else inventory.campaigns
     val now = System.currentTimeMillis()
-    // Campaigns with nothing to watch for, only drops earned by subscribing, go in their own section.
+    // Campaigns with subscription drops (game sub badges, and streamers' own channel campaigns, which
+    // pair a sub reward with a long watch-time one) go in their own section.
     val subscription = campaigns
-        .filter { c -> c.endsAtMs > now && c.drops.none { it.isOpen(now) } && c.drops.any { it.subOnly && !it.claimed && it.endsAtMs > now } }
+        .filter { c ->
+            c.endsAtMs > now && c.drops.any { it.subOnly } &&
+                c.drops.any { !it.claimed && it.endsAtMs > now && (it.subOnly || it.required > 0) }
+        }
         .sortedWith(compareByDescending<InvCampaign> { c -> c.drops.any { it.subOnly && it.done && !it.claimed } }.thenBy { it.endsAtMs })
     val subIds = subscription.map { it.id }.toSet()
     val active = campaigns
@@ -529,7 +533,7 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
                         if (mining) {
                             Spacer(Modifier.width(8.dp))
                             Pill("Now", scheme.tertiaryContainer, scheme.onTertiaryContainer, dot = StatusColors.good, live = true)
-                        } else if (!c.accountConnected) {
+                        } else if (!c.accountConnected && c.gameName.isNotBlank()) {
                             Spacer(Modifier.width(8.dp))
                             Pill("Not linked", scheme.errorContainer, scheme.onErrorContainer)
                         }
@@ -545,7 +549,7 @@ private fun CampaignCard(c: InvCampaign, mining: Boolean, onClick: () -> Unit, m
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Row {
-                            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Text(d.name.ifBlank { if (d.subOnly) "Subscriber reward" else "Watch-time reward" }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 when {

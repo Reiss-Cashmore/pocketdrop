@@ -94,7 +94,7 @@ internal fun CampaignSheet(
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (miningNow) Pill("Mining now", scheme.tertiaryContainer, scheme.onTertiaryContainer, dot = StatusColors.good, live = true)
                         Pill(endsIn(c.endsAtMs, now), scheme.surfaceContainerHighest, scheme.onSurfaceVariant)
-                        if (!c.accountConnected) Pill("Not linked", scheme.errorContainer, scheme.onErrorContainer)
+                        if (!c.accountConnected && c.gameName.isNotBlank()) Pill("Not linked", scheme.errorContainer, scheme.onErrorContainer)
                     }
                 }
             }
@@ -107,7 +107,8 @@ internal fun CampaignSheet(
                 Progress(if (c.drops.isEmpty()) 0f else earned.toFloat() / c.drops.size)
             }
 
-            if (!c.accountConnected) {
+            // Channel campaigns have no game, so there's no account to link.
+            if (!c.accountConnected && c.gameName.isNotBlank()) {
                 Surface(color = scheme.errorContainer, shape = MaterialTheme.shapes.large) {
                     Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Link your ${c.gameName} account", style = MaterialTheme.typography.titleSmall, color = scheme.onErrorContainer)
@@ -198,7 +199,7 @@ private fun DropDetail(d: InvDrop, now: Long, stuck: Boolean) {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(d.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(d.name.ifBlank { if (d.subOnly) "Subscriber reward" else "Watch-time reward" }, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(8.dp))
                 when {
                     d.claimed -> Icon(Icons.Default.CheckCircle, "Claimed", tint = StatusColors.good, modifier = Modifier.size(20.dp))
