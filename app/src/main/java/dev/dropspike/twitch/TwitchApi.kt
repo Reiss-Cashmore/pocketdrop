@@ -35,9 +35,15 @@ data class Campaign(
 )
 
 /**
+ * One unlockable part of a reward campaign. Its id is what Twitch's live session (DropCurrentSessionContext)
+ * reports as the drop it is counting, which is how progress on a watch-time group is read.
+ */
+data class RewardGroup(val id: String, val minutes: Int, val subs: Int, val rewards: List<String>)
+
+/**
  * A Twitch reward campaign (the dashboard's rewardCampaignsAvailableToUser): a Twitch-side reward such
- * as a chat badge for watching a category or subscribing. Separate from drop campaigns, and Twitch
- * doesn't report progress on them here.
+ * as a chat badge for watching a category or subscribing. Separate from drop campaigns; the dashboard
+ * gives no progress, but the live session does (see [RewardGroup]).
  */
 data class RewardCampaign(
     val id: String,
@@ -54,7 +60,11 @@ data class RewardCampaign(
     val imageUrl: String?,
     val url: String?,
     val summary: String,
-)
+    val groups: List<RewardGroup> = emptyList(),
+) {
+    /** Groups earned by watching (not by subscribing). */
+    val watchGroups get() = groups.filter { it.minutes > 0 && it.subs == 0 }
+}
 
 /** `campaigns == null` means Twitch returned `dropCampaigns: null`, i.e. the integrity gate. */
 data class DashboardResult(val campaigns: List<Campaign>?, val errors: List<String>, val rewards: List<RewardCampaign> = emptyList())
@@ -282,7 +292,10 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
         if (prefs.clientId == DeviceClient.MobileWeb.clientId) ApiOrigin.Mobile else ApiOrigin.Www
 
     suspend fun dashboard(useIntegrity: Boolean, origin: ApiOrigin = defaultOrigin()): DashboardResult {
-        val root = gql(Queries.dashboard(), useIntegrity, origin)
+        // The current web version (Nov 2026) also lists each reward campaign's groups; fall back to the
+        // older one if Twitch stops knowing it.
+        var root = gql(Queries.dashboard(), useIntegrity, origin)
+        if (root.errorMessages().contains("PersistedQueryNotFound")) root = gql(Queries.dashboardLegacy(), useIntegrity, origin)
         val errors = root.errorMessages()
         val data = root.optJSONObject("data")
         val rewards = (data?.optJSONArray("rewardCampaignsAvailableToUser")
@@ -326,6 +339,18 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 ?: (r.optJSONArray("rewards") ?: JSONArray()).objects().firstNotNullOfOrNull { str(it.optJSONObject("thumbnailImage"), "image1xURL") },
             url = (str(r, "aboutURL") ?: str(r, "externalURL"))?.takeIf { it.startsWith("http") },
             summary = listOfNotNull(str(r, "summary"), str(r, "instructions")).joinToString("\n"),
+            groups = (r.optJSONArray("rewardGroups") ?: JSONArray()).objects().map { g ->
+                val u = g.optJSONObject("unlockRequirements")
+                RewardGroup(
+                    id = g.optString("id"),
+                    minutes = u?.optInt("minuteWatchedGoal") ?: 0,
+                    subs = u?.optInt("subsGoal") ?: 0,
+                    rewards = (g.optJSONArray("rewards") ?: JSONArray()).objects().mapNotNull { str(it, "name") },
+                )
+            }.ifEmpty {
+                // Older query without groups: the campaign itself is the one group.
+                listOf(RewardGroup(r.optString("id"), req?.optInt("minuteWatchedGoal") ?: 0, req?.optInt("subsGoal") ?: 0, emptyList()))
+            },
         )
     }
 
@@ -721,7 +746,14 @@ internal object Queries {
             JSONObject().put("persistedQuery", JSONObject().put("version", 1).put("sha256Hash", sha)),
         )
 
+    // twitch.tv/drops/campaigns, Nov 2026: adds rewardCampaignsAvailableToUser.rewardGroups.
     fun dashboard() = persisted(
+        "ViewerDropsDashboard",
+        "69750554e0a81492f2d343558f84bdf3e324767650a2dbb6e79a3c629b4548cf",
+        JSONObject().put("fetchRewardCampaigns", true),
+    )
+
+    fun dashboardLegacy() = persisted(
         "ViewerDropsDashboard",
         "c16bb890cc8ce7647a96ee69cd313d423a378a3dedadf630a1017cde18975feb",
         JSONObject().put("fetchRewardCampaigns", true),

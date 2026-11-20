@@ -88,6 +88,13 @@ class Prefs(context: Context) {
                     j.optString("slug").ifEmpty { null }, j.optLong("startsAt"), j.optLong("endsAt"),
                     j.optInt("minutes"), j.optInt("subs"), List(rs.length()) { rs.getString(it) },
                     j.optString("image").ifEmpty { null }, j.optString("url").ifEmpty { null }, j.optString("summary"),
+                    groups = (j.optJSONArray("groups") ?: JSONArray()).let { ga ->
+                        List(ga.length()) { gi ->
+                            val g = ga.getJSONObject(gi)
+                            val gr = g.optJSONArray("rewards") ?: JSONArray()
+                            dev.dropspike.twitch.RewardGroup(g.optString("id"), g.optInt("minutes"), g.optInt("subs"), List(gr.length()) { gr.getString(it) })
+                        }
+                    },
                 )
             }
         }.getOrDefault(emptyList())
@@ -98,26 +105,24 @@ class Prefs(context: Context) {
                         JSONObject().put("id", r.id).put("name", r.name).put("brand", r.brand).put("game", r.game)
                             .put("slug", r.gameSlug ?: "").put("startsAt", r.startsAtMs).put("endsAt", r.endsAtMs)
                             .put("minutes", r.minutesGoal).put("subs", r.subsGoal).put("rewards", JSONArray(r.rewards))
-                            .put("image", r.imageUrl ?: "").put("url", r.url ?: "").put("summary", r.summary),
+                            .put("image", r.imageUrl ?: "").put("url", r.url ?: "").put("summary", r.summary)
+                            .put("groups", JSONArray().apply {
+                                r.groups.forEach { g -> put(JSONObject().put("id", g.id).put("minutes", g.minutes).put("subs", g.subs).put("rewards", JSONArray(g.rewards))) }
+                            }),
                     )
                 }
             }.toString())
         }
 
-    /** Minutes PocketDrop watched for each reward campaign (see RewardWatch): id → progress. */
-    var rewardProgress: Map<String, dev.dropspike.service.RewardWatch.Progress>
+    /** What Twitch's live session last said about each reward campaign (see RewardWatch): id → state. */
+    var rewardProgress: Map<String, dev.dropspike.service.RewardWatch.State>
         get() = runCatching {
-            val o = JSONObject(sp.getString("reward_progress", null) ?: "{}")
-            o.keys().asSequence().associateWith { k ->
-                val e = o.getJSONObject(k)
-                val days = e.optJSONArray("days") ?: JSONArray()
-                dev.dropspike.service.RewardWatch.Progress(e.optString("day"), e.optInt("min"), List(days.length()) { days.getString(it) })
-            }
+            val o = JSONObject(sp.getString("reward_state", null) ?: "{}")
+            o.keys().asSequence().associateWith { k -> dev.dropspike.service.RewardWatch.State.fromJson(o.getJSONObject(k)) }
         }.getOrDefault(emptyMap())
         set(v) = sp.edit {
-            putString("reward_progress", JSONObject().apply {
-                v.forEach { (k, p) -> put(k, JSONObject().put("day", p.day).put("min", p.minutes).put("days", JSONArray(p.doneDays))) }
-            }.toString())
+            putString("reward_state", JSONObject().apply { v.forEach { (k, st) -> put(k, st.toJson()) } }.toString())
+            remove("reward_progress")
         }
 
     /** The game the user chose for a reward campaign: id → game name ("" = none). */

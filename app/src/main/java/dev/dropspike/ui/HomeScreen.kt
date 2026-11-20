@@ -594,7 +594,8 @@ private fun RewardCard(
     var choices by remember { mutableStateOf(0) }
     val overrides = remember(choices, tick) { prefs.rewardGames }
     val progress = remember(choices, tick) { prefs.rewardProgress[r.id] }
-    val target = remember(r.id, watched, overrides) { RewardWatch.gameFor(r, watched, overrides) }
+    val target = remember(r.id, watched, overrides, progress) { RewardWatch.gameFor(r, watched, overrides, progress) }
+    val guess = RewardWatch.isGuess(r, overrides, progress)
     var menu by remember { mutableStateOf(false) }
     val url = r.url ?: "https://www.twitch.tv/drops/campaigns"
     val game = remember(r.id) { WatchedGame("", r.game.ifEmpty { r.brand.ifEmpty { r.name } }, r.gameSlug ?: slugOf(r.game)) }
@@ -611,7 +612,7 @@ private fun RewardCard(
                 Text(r.rewards.joinToString().ifEmpty { r.name }, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
                     listOfNotNull(
-                        r.minutesGoal.takeIf { it > 0 }?.let { m -> "Watch ${if (m >= 60 && m % 60 == 0) "${m / 60} h" else "$m min"}" + (if (r.game.isNotEmpty()) " of ${r.game}" else "") },
+                        (r.watchGroups.firstOrNull()?.minutes ?: r.minutesGoal).takeIf { it > 0 }?.let { m -> "Watch ${if (m >= 60 && m % 60 == 0) "${m / 60} h" else "$m min"}" + (if (r.game.isNotEmpty()) " of ${r.game}" else "") },
                         r.subsGoal.takeIf { it > 0 }?.let { "Subscribe ($it sub${if (it == 1) "" else "s"})" },
                     ).joinToString(" or ").ifEmpty { r.summary.ifEmpty { r.name } },
                     style = MaterialTheme.typography.bodySmall,
@@ -625,17 +626,19 @@ private fun RewardCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = scheme.outline,
                 )
-                if (r.minutesGoal > 0) {
-                    val daily = RewardWatch.isDaily(r)
-                    val doneDays = RewardWatch.daysDone(progress)
-                    val today = if (daily) RewardWatch.minutesToday(progress) else progress?.minutes ?: 0
+                if (r.watchGroups.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    val days = progress?.doneDays?.size ?: 0
+                    val seen = progress?.takeIf { it.required > 0 }
                     Text(
                         when {
                             target == null -> "Not mined: pick the game it counts for"
-                            RewardWatch.isFinished(r, progress) -> if (daily) "Done for today · $doneDays day${if (doneDays == 1) "" else "s"} watched" else "Watch time done"
-                            else -> "Mining ${target.name} for it · ${minOf(today, r.minutesGoal)}/${r.minutesGoal} min${if (daily) " today" else ""}" +
-                                (if (daily && doneDays > 0) " · $doneDays day${if (doneDays == 1) "" else "s"} done" else "")
-                        },
+                            (progress?.pausedUntil ?: 0) > now ->
+                                "${progress!!.pauseReason.replaceFirstChar { it.uppercase() }} · checks again at ${dev.dropspike.data.SystemInfo.time(progress.pausedUntil)}"
+                            seen != null -> "Twitch: ${seen.minutes}/${seen.required} min on ${target.name}"
+                            guess -> "Trying ${target.name}; waiting for Twitch to confirm it counts"
+                            else -> "Mining ${target.name} for it; waiting for Twitch's count"
+                        } + (if (days > 0) " · goal reached on $days day${if (days == 1) "" else "s"}" else ""),
                         style = MaterialTheme.typography.labelMedium,
                         color = if (target == null) scheme.error else scheme.primary,
                     )
@@ -657,7 +660,7 @@ private fun RewardCard(
                             )
                         }
                     }
-                    Text("Twitch doesn't share progress on these; minutes are counted here, and Twitch's page has the real tally", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+                    Text("Progress is what Twitch's live session reports while the miner watches", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
                 }
             }
         }
