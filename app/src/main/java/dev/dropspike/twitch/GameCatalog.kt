@@ -19,8 +19,9 @@ object GameCatalog {
                 ?.groupBy { it.gameId.ifEmpty { it.game.lowercase() } }
                 ?.map { (_, cs) ->
                     val c = cs.first()
-                    // Linked (or no link required) if any campaign says so; otherwise the game can't earn.
-                    val needsLink = cs.all { it.linked == false }
+                    // Linked (or no link required) if any campaign says so. Twitch also says "not connected"
+                    // for campaigns with nothing to link (e.g. Just Chatting), so a link page is required too.
+                    val needsLink = cs.all { it.linked == false && it.linkUrl != null }
                     WatchedGame(
                         c.gameId, c.game, c.gameSlug ?: slugOf(c.game), cs.size,
                         needsLink = needsLink,
@@ -51,7 +52,7 @@ object GameCatalog {
             .sortedBy { it.name.lowercase() }
         prefs.gameCatalog = merged
         prefs.gameCatalogAt = now
-        DiagLog.i("games: ${merged.size} games with active campaigns, ${merged.count { it.needsLink }} need an account link: ${merged.filter { it.needsLink }.joinToString { it.name }}")
+        DiagLog.i("games: ${merged.size} games with active campaigns, ${merged.count { it.needsLink }} need an account link: ${merged.filter { it.needsLink }.joinToString { "${it.name} (${it.linkUrl})" }}")
         // Keep the watch list's link status in step with the catalogue.
         prefs.watchedGames = prefs.watchedGames.map { w -> merged.firstOrNull { it.slug == w.slug } ?: w }
         merged

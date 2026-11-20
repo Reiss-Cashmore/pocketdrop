@@ -273,7 +273,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 gameSlug = c.optJSONObject("game")?.optString("slug")?.ifEmpty { null },
                 endsAtMs = parseTime(c.optString("endAt")),
                 startsAtMs = parseTime(c.optString("startAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
-                linkUrl = c.optString("accountLinkURL").takeIf { it.isNotBlank() && it != "null" },
+                linkUrl = realLinkUrl(c.optString("accountLinkURL")),
                 status = c.optString("status"),
                 linked = c.optJSONObject("self")?.takeIf { it.has("isAccountConnected") }?.optBoolean("isAccountConnected"),
             )
@@ -371,8 +371,11 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             gameSlug = game.optString("slug").ifEmpty { null },
             endsAtMs = parseTime(c.optString("endAt")),
             startsAtMs = parseTime(c.optString("startAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
-            accountConnected = c.optJSONObject("self")?.optBoolean("isAccountConnected", true) ?: true,
-            linkUrl = c.optString("accountLinkURL").takeIf { it.startsWith("http") },
+            // Twitch reports "not connected" for campaigns with nothing to link (e.g. Just Chatting),
+            // so only a real link page counts as a link requirement.
+            accountConnected = (c.optJSONObject("self")?.optBoolean("isAccountConnected", true) ?: true) ||
+                realLinkUrl(c.optString("accountLinkURL")) == null,
+            linkUrl = realLinkUrl(c.optString("accountLinkURL")),
             allowedLogins = if (allowEnabled) {
                 (allow?.optJSONArray("channels") ?: JSONArray()).objects().map { it.optString("name") }.filter { it.isNotEmpty() }
             } else emptyList(),
@@ -638,6 +641,16 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
 
     companion object {
         private val JSON = "application/json".toMediaType()
+
+        /** An account-link page, or null for blank values and Twitch's placeholder (its own home page). */
+        fun realLinkUrl(raw: String?): String? {
+            val u = raw?.trim().orEmpty()
+            if (!u.startsWith("http")) return null
+            val uri = runCatching { java.net.URI(u) }.getOrNull() ?: return null
+            val host = uri.host?.lowercase()?.removePrefix("www.") ?: return null
+            if (host == "twitch.tv" && uri.path.orEmpty().trim('/').isEmpty()) return null
+            return u
+        }
 
         /** Game name (lowercase) → (when looked up, real directory slug or null if the lookup failed). */
         private val resolvedSlugs = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String?>>()
