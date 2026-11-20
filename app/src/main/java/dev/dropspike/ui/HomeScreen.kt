@@ -69,6 +69,7 @@ import dev.dropspike.service.MiningNow
 import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.twitch.InvDrop
 import dev.dropspike.twitch.RewardCampaign
+import dev.dropspike.service.RewardWatch
 import dev.dropspike.twitch.WatchedGame
 import dev.dropspike.twitch.slugOf
 
@@ -173,7 +174,16 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
                 RewardsHeader(rewardCampaigns, rewardsExpanded, onToggle = { rewardsExpanded = !rewardsExpanded }, modifier = Modifier.animateItem())
             }
             if (rewardsExpanded) {
-                items(rewardCampaigns, key = { "reward-" + it.id }) { r -> RewardCard(r, modifier = Modifier.animateItem()) }
+                items(rewardCampaigns, key = { "reward-" + it.id }) { r ->
+                    RewardCard(
+                        r,
+                        watched = games.watched,
+                        // Re-read every minute while mining so today's minutes stay current.
+                        tick = status.now?.since to uptime.size,
+                        onPick = { name -> vm.setRewardGame(r.id, name) },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
             }
         }
     }
@@ -554,7 +564,7 @@ private fun RewardsHeader(rewards: List<RewardCampaign>, expanded: Boolean, onTo
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text("Rewards Twitch gives for watch time; progress shows on Twitch, not here", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+                Text("Rewards Twitch gives for watch time; the miner gives a watched game's ones their time each day", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
             }
             Icon(
                 Icons.Default.KeyboardArrowDown,
@@ -566,11 +576,26 @@ private fun RewardsHeader(rewards: List<RewardCampaign>, expanded: Boolean, onTo
     }
 }
 
-/** One Twitch reward campaign: what it gives, what it asks for, when it ends. Tap for Twitch's page. */
+/**
+ * One Twitch reward campaign: what it gives, what it asks for, when it ends, and (for watch-time ones)
+ * which watched game the miner gives the time to, with today's minutes. Tap for Twitch's page.
+ */
 @Composable
-private fun RewardCard(r: RewardCampaign, modifier: Modifier = Modifier) {
+private fun RewardCard(
+    r: RewardCampaign,
+    watched: List<WatchedGame>,
+    tick: Any?,
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val scheme = MaterialTheme.colorScheme
     val context = LocalContext.current
+    val prefs = DropSpikeApp.instance.prefs
+    var choices by remember { mutableStateOf(0) }
+    val overrides = remember(choices, tick) { prefs.rewardGames }
+    val progress = remember(choices, tick) { prefs.rewardProgress[r.id] }
+    val target = remember(r.id, watched, overrides) { RewardWatch.gameFor(r, watched, overrides) }
+    var menu by remember { mutableStateOf(false) }
     val url = r.url ?: "https://www.twitch.tv/drops/campaigns"
     val game = remember(r.id) { WatchedGame("", r.game.ifEmpty { r.brand.ifEmpty { r.name } }, r.gameSlug ?: slugOf(r.game)) }
     Surface(
@@ -596,10 +621,44 @@ private fun RewardCard(r: RewardCampaign, modifier: Modifier = Modifier) {
                 )
                 val days = ((r.endsAtMs - System.currentTimeMillis()) / 86_400_000L).toInt()
                 Text(
-                    if (days >= 1) "Ends in $days day${if (days == 1) "" else "s"} · progress shows on Twitch" else "Ends today · progress shows on Twitch",
+                    if (days >= 1) "Ends in $days day${if (days == 1) "" else "s"}" else "Ends today",
                     style = MaterialTheme.typography.labelSmall,
                     color = scheme.outline,
                 )
+                if (r.minutesGoal > 0) {
+                    val daily = RewardWatch.isDaily(r)
+                    val doneDays = RewardWatch.daysDone(progress)
+                    val today = if (daily) RewardWatch.minutesToday(progress) else progress?.minutes ?: 0
+                    Text(
+                        when {
+                            target == null -> "Not mined: pick the game it counts for"
+                            RewardWatch.isFinished(r, progress) -> if (daily) "Done for today · $doneDays day${if (doneDays == 1) "" else "s"} watched" else "Watch time done"
+                            else -> "Mining ${target.name} for it · ${minOf(today, r.minutesGoal)}/${r.minutesGoal} min${if (daily) " today" else ""}" +
+                                (if (daily && doneDays > 0) " · $doneDays day${if (doneDays == 1) "" else "s"} done" else "")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (target == null) scheme.error else scheme.primary,
+                    )
+                    Box {
+                        androidx.compose.material3.TextButton(onClick = { menu = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp)) {
+                            Text("Counts for: ${target?.name ?: "none"}", style = MaterialTheme.typography.labelMedium)
+                            Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(18.dp))
+                        }
+                        androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            watched.forEach { g ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(g.name) },
+                                    onClick = { menu = false; onPick(g.name); choices++ },
+                                )
+                            }
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("None (don't mine)") },
+                                onClick = { menu = false; onPick(""); choices++ },
+                            )
+                        }
+                    }
+                    Text("Twitch doesn't share progress on these; minutes are counted here, and Twitch's page has the real tally", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+                }
             }
         }
     }

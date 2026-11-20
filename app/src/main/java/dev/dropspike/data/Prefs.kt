@@ -104,6 +104,30 @@ class Prefs(context: Context) {
             }.toString())
         }
 
+    /** Minutes PocketDrop watched for each reward campaign (see RewardWatch): id → progress. */
+    var rewardProgress: Map<String, dev.dropspike.service.RewardWatch.Progress>
+        get() = runCatching {
+            val o = JSONObject(sp.getString("reward_progress", null) ?: "{}")
+            o.keys().asSequence().associateWith { k ->
+                val e = o.getJSONObject(k)
+                val days = e.optJSONArray("days") ?: JSONArray()
+                dev.dropspike.service.RewardWatch.Progress(e.optString("day"), e.optInt("min"), List(days.length()) { days.getString(it) })
+            }
+        }.getOrDefault(emptyMap())
+        set(v) = sp.edit {
+            putString("reward_progress", JSONObject().apply {
+                v.forEach { (k, p) -> put(k, JSONObject().put("day", p.day).put("min", p.minutes).put("days", JSONArray(p.doneDays))) }
+            }.toString())
+        }
+
+    /** The game the user chose for a reward campaign: id → game name ("" = none). */
+    var rewardGames: Map<String, String>
+        get() = runCatching {
+            val o = JSONObject(sp.getString("reward_games", null) ?: "{}")
+            o.keys().asSequence().associateWith { o.getString(it) }
+        }.getOrDefault(emptyMap())
+        set(v) = sp.edit { putString("reward_games", JSONObject(v).toString()) }
+
     var gameCatalogAt: Long
         get() = sp.getLong("game_catalog_at", 0L)
         set(v) = sp.edit { putLong("game_catalog_at", v) }

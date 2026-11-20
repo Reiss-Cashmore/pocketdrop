@@ -325,7 +325,7 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
             imageUrl = str(r.optJSONObject("image"), "image1xURL")
                 ?: (r.optJSONArray("rewards") ?: JSONArray()).objects().firstNotNullOfOrNull { str(it.optJSONObject("thumbnailImage"), "image1xURL") },
             url = (str(r, "aboutURL") ?: str(r, "externalURL"))?.takeIf { it.startsWith("http") },
-            summary = str(r, "summary") ?: str(r, "instructions").orEmpty(),
+            summary = listOfNotNull(str(r, "summary"), str(r, "instructions")).joinToString("\n"),
         )
     }
 

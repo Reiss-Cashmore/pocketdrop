@@ -272,6 +272,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _dynamicColor = MutableStateFlow(prefs.dynamicColor)
     val dynamicColor: StateFlow<Boolean> = _dynamicColor
 
+    /** Which watched game a Twitch reward campaign counts for ("" = none, don't mine it). */
+    fun setRewardGame(rewardId: String, gameName: String) {
+        prefs.rewardGames = prefs.rewardGames + (rewardId to gameName)
+        DiagLog.i("games: reward $rewardId now counts for ${gameName.ifEmpty { "nothing" }}")
+    }
+
     fun setDynamicColor(on: Boolean) {
         prefs.dynamicColor = on
         _dynamicColor.value = on

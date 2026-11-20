@@ -55,6 +55,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         var watches = 0
         /** What Twitch's live session is counting for this game, while the inventory doesn't show it. */
         var live: DropSession? = null
+        /** False when the channel was picked only for a Twitch reward campaign's watch time. */
+        var forDrops = true
     }
 
     /** What is being mined right now, for the home screen (the first channel). */
@@ -170,7 +172,11 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         while (slots.size < maxSlots) {
             val taken = slots.map { key(it.target.game) }.toSet()
             val t = select(campaigns, exclude = taken) ?: break
-            slots += Slot(t, lastMinutes = gameMinutes(campaigns, t.game)).apply { live = lastLive[key(t.game)] }
+            val rewardOnly = !hasOpenDrops(campaigns, t.game) && RewardWatch.due(prefs).any { key(it.game) == key(t.game) }
+            slots += Slot(t, lastMinutes = gameMinutes(campaigns, t.game)).apply {
+                live = lastLive[key(t.game)]
+                forDrops = !rewardOnly
+            }
             DiagLog.i("miner: watching ${t.stream.login} for ${t.game.name}${if (slots.size > 1) " (second channel)" else ""}")
         }
 
@@ -206,12 +212,15 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             }
             anySent = true
             if (slot.credited) anyCredited = true
-            notes += progress
+            for ((d, p) in RewardWatch.addMinute(prefs, t.game)) {
+                DiagLog.i("miner: ${d.reward.name}: ${p.minutes} min watched today on ${t.game.name}, goal reached (${p.doneDays.size} day(s) so far)")
+            }
+            notes += if (slot.forDrops) progress else "${t.game.name} · ${rewardText(t.game)} via ${t.stream.login}"
         }
         this.campaigns = withDiscovered(campaigns)
         now = slots.getOrNull(0)?.let { snapshot(it, campaigns, now) }
         second = slots.getOrNull(1)?.let { snapshot(it, campaigns, second) }
-        describe = slots.joinToString(" + ") { "${it.target.game.name} · ${progressText(campaigns, it.target.game, it.live)}" }.ifEmpty { "Finding a channel" }
+        describe = slots.joinToString(" + ") { "${it.target.game.name} · ${if (it.forDrops) progressText(campaigns, it.target.game, it.live) else rewardText(it.target.game)}" }.ifEmpty { "Finding a channel" }
         val note = notes.joinToString(" + ")
         return when {
             anyCredited -> MinuteStatus.Credited to note
@@ -248,6 +257,16 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val t = slot.target
         val minutes = gameMinutes(campaigns, t.game)
         val started = hasOpenDrops(campaigns, t.game)
+        // Watching only for a Twitch reward campaign: there is no drop credit to check, just time.
+        val due = if (started || slot.live != null) emptyList() else RewardWatch.due(prefs).filter { key(it.game) == key(t.game) }
+        if (!started && slot.live == null && (due.isNotEmpty() || !slot.forDrops)) {
+            slot.lastMinutes = minutes
+            if (due.isEmpty()) return "reward watch time done for today"
+            slot.forDrops = false
+            DiagLog.i("miner: ${t.game.name} on ${t.stream.login} for ${due.joinToString { "${it.reward.name} ${it.minutesToday}/${it.target} min today" }}")
+            slot.credited = false
+            return if (slot.onTarget >= 30) "periodic re-check" else null
+        }
         // Twitch's inventory can leave out a campaign it is counting (Escape from Tarkov and Hearthstone
         // in Oct 2026 showed 356/480 and 63/420 in the session while missing from the inventory), so
         // while the game has nothing open there, the live session is read every minute and is the credit.
@@ -485,7 +504,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     suspend fun hasWork(): String? {
         val campaigns = api.inventoryCampaigns()
         for (game in candidates(campaigns)) {
-            val stream = runCatching { findStream(game, campaigns, probe = false) }.getOrNull() ?: continue
+            val forReward = RewardWatch.due(prefs).any { key(it.game) == key(game) }
+            val stream = runCatching { streamFor(game, campaigns, forReward, probe = false) }.getOrNull() ?: continue
             return "${game.name} is live on ${stream.login}"
         }
         return null
@@ -507,9 +527,12 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             .map { (c, _) -> WatchedGame(c.gameId, c.gameName, c.gameSlug ?: slugOf(c.gameName)) }
         val notCounting = prefs.notCounting
         val allEarned = prefs.allEarned
-        return (watched + inProgress)
+        // Games owed time for a Twitch reward campaign today go first, whatever their drops say:
+        // the reward's minutes don't show in the inventory.
+        val rewards = RewardWatch.due(prefs, now).map { it.game }
+        return (rewards + (watched + inProgress)
+            .filter { (cooldown[key(it)] ?: 0L) < now && (notCounting[key(it)] ?: 0L) < now && (allEarned[key(it)] ?: 0L) < now })
             .distinctBy { key(it) }
-            .filter { (cooldown[key(it)] ?: 0L) < now && (notCounting[key(it)] ?: 0L) < now && (allEarned[key(it)] ?: 0L) < now }
     }
 
     /** Clears "not counting" and "all earned" marks that have expired, or whose game has open drops again. */
@@ -540,10 +563,13 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                 (if (cooling.isNotEmpty()) " · cooling down: ${cooling.joinToString()}" else "") +
                 " · watched=${prefs.watchedGames.size}, onlyWatched=${prefs.onlyWatched}",
         )
+        val rewardDue = RewardWatch.due(prefs)
+        if (rewardDue.isNotEmpty()) DiagLog.i("miner: reward time due today: ${rewardDue.joinToString { "${it.reward.name} → ${it.game.name} ${it.minutesToday}/${it.target} min" }}")
         for (game in list) {
+            val forReward = rewardDue.any { key(it.game) == key(game) }
             // Nothing open in the inventory: it may be not started, fully claimed (gone from the
             // inventory), finished but unclaimed, or only open on certain channels. Ask Twitch.
-            if (!hasOpenDrops(campaigns, game)) {
+            if (!forReward && !hasOpenDrops(campaigns, game)) {
                 val known = gameDetails(game)
                 if (known != null) {
                     claimDetails(known)
@@ -553,7 +579,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                     }
                 }
             }
-            val stream = runCatching { findStream(game, campaigns) }.getOrElse {
+            val stream = runCatching { streamFor(game, campaigns, forReward) }.getOrElse {
                 DiagLog.i("miner: channel search for ${game.name} failed: ${it.message}")
                 null
             } ?: run {
@@ -569,6 +595,14 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             return Target(game, stream, spade)
         }
         return null
+    }
+
+    /** [findStream], and for a reward campaign's game any live drops-enabled channel playing it. */
+    private suspend fun streamFor(game: WatchedGame, campaigns: List<InvCampaign>, forReward: Boolean, probe: Boolean = true): LiveStream? {
+        findStream(game, campaigns, probe)?.let { return it }
+        if (!forReward) return null
+        return api.liveStreams(game).firstOrNull()
+            ?.also { DiagLog.i("miner: ${game.name}: no channel for its drops, watching ${it.login} for its Twitch reward") }
     }
 
     private suspend fun findStream(game: WatchedGame, campaigns: List<InvCampaign>, probe: Boolean = true): LiveStream? {
@@ -644,7 +678,14 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     private fun gameMinutes(campaigns: List<InvCampaign>, game: WatchedGame) =
         campaigns.filter { game.matches(it.gameId, it.gameName) }.sumOf { c -> c.drops.filter { !it.claimed }.sumOf { it.minutes } }
 
-    private fun progressText(campaigns: List<InvCampaign>, game: WatchedGame, live: DropSession? = null): String {
+    private fun rewardText(game: WatchedGame): String {
+        val p = prefs.rewardProgress
+        return prefs.rewardCampaigns.filter { r -> RewardWatch.gameFor(r, prefs.watchedGames, prefs.rewardGames)?.let { key(it) == key(game) } == true && r.minutesGoal > 0 }
+            .joinToString { r -> "${r.name} ${RewardWatch.minutesToday(p[r.id])}/${r.minutesGoal} min today" }
+            .ifEmpty { "Twitch reward" }
+    }
+
+        private fun progressText(campaigns: List<InvCampaign>, game: WatchedGame, live: DropSession? = null): String {
         val drop = campaigns.filter { game.matches(it.gameId, it.gameName) }.flatMap { openDrops(it) }
             .maxByOrNull { it.minutes.toFloat() / it.required }
         return drop?.let { "${it.name} ${it.minutes}/${it.required}" }
