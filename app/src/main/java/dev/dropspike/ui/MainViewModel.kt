@@ -63,6 +63,8 @@ data class GamesState(
     val wakeIntervalMin: Int = 0,
     val lastWakeCheck: String = "",
     val autoMine: Boolean = true,
+    /** Twitch reward campaigns (badges etc.) from the last catalogue refresh. */
+    val rewardCampaigns: List<dev.dropspike.twitch.RewardCampaign> = emptyList(),
 )
 
 data class MiningSettings(val twoChannels: Boolean, val onlyCharging: Boolean, val onlyWifi: Boolean, val mineUnlinked: Boolean)
@@ -118,6 +120,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         wakeIntervalMin = prefs.wakeIntervalMin,
         lastWakeCheck = prefs.lastWakeCheck,
         autoMine = prefs.autoMine,
+        rewardCampaigns = prefs.rewardCampaigns,
     )
 
     /** Re-read settings the background check may have changed (e.g. its last result). */

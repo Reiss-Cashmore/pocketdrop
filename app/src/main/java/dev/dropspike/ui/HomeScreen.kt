@@ -68,6 +68,7 @@ import dev.dropspike.service.MinerStatus
 import dev.dropspike.service.MiningNow
 import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.twitch.InvDrop
+import dev.dropspike.twitch.RewardCampaign
 import dev.dropspike.twitch.WatchedGame
 import dev.dropspike.twitch.slugOf
 
@@ -81,6 +82,7 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
     val perms = rememberPermissionState()
     var openCampaign by rememberSaveable { mutableStateOf<String?>(null) }
     var subsExpanded by rememberSaveable { mutableStateOf(false) }
+    var rewardsExpanded by rememberSaveable { mutableStateOf(false) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { if (!MinerState.status.value.running) vm.refreshInventory() }
 
     // While mining, the service already reads the inventory every minute.
@@ -106,7 +108,16 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
         openCampaign = active.firstOrNull { m.game.matches(it.gameId, it.gameName) }?.id
     }
 
-    ScreenList(refreshing = inventory.loading, onRefresh = vm::refreshInventory) {
+    val rewardCampaigns = games.rewardCampaigns.filter { it.endsAtMs > now }.sortedBy { it.endsAtMs }
+
+    ScreenList(
+        refreshing = inventory.loading,
+        onRefresh = {
+            vm.refreshInventory()
+            // Reward campaigns come with the game list; keep them reasonably fresh too.
+            if (!games.busy && now - games.catalogAt > 30 * 60_000L) vm.refreshGameCatalog()
+        },
+    ) {
         item(key = "header") {
             ScreenHeader(
                 "PocketDrop",
@@ -155,6 +166,14 @@ fun HomeScreen(vm: MainViewModel, onOpenGames: () -> Unit) {
                 items(subscription, key = { "sub-" + it.id }) { c ->
                     CampaignCard(c, mining = false, onClick = { openCampaign = c.id }, modifier = Modifier.animateItem())
                 }
+            }
+        }
+        if (rewardCampaigns.isNotEmpty()) {
+            item(key = "rewards-header") {
+                RewardsHeader(rewardCampaigns, rewardsExpanded, onToggle = { rewardsExpanded = !rewardsExpanded }, modifier = Modifier.animateItem())
+            }
+            if (rewardsExpanded) {
+                items(rewardCampaigns, key = { "reward-" + it.id }) { r -> RewardCard(r, modifier = Modifier.animateItem()) }
             }
         }
     }
@@ -500,6 +519,88 @@ private fun SubscriptionHeader(campaigns: List<InvCampaign>, expanded: Boolean, 
                 tint = scheme.onSurfaceVariant,
                 modifier = Modifier.graphicsLayer { rotationZ = rotation },
             )
+        }
+    }
+}
+
+/** Header of the Twitch rewards section (badges and other Twitch-side rewards), with a summary. */
+@Composable
+private fun RewardsHeader(rewards: List<RewardCampaign>, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
+    Surface(
+        onClick = onToggle,
+        shape = MaterialTheme.shapes.large,
+        color = scheme.surfaceContainerLow,
+        modifier = modifier.fillMaxWidth().padding(top = 8.dp),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(scheme.tertiaryContainer), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Notifications, null, tint = scheme.onTertiaryContainer, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Twitch rewards", style = MaterialTheme.typography.titleMedium)
+                val watch = rewards.count { it.minutesGoal > 0 }
+                Text(
+                    "${rewards.size} reward${if (rewards.size == 1) "" else "s"}" + (if (watch > 0) " · $watch for watch time" else ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+                Text(
+                    rewards.map { it.game.ifEmpty { it.brand.ifEmpty { it.name } } }.distinct().joinToString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text("Badges and other rewards Twitch gives itself; add the game to your watch list to earn them", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+            }
+            Icon(
+                Icons.Default.KeyboardArrowDown,
+                if (expanded) "Collapse Twitch rewards" else "Expand Twitch rewards",
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.graphicsLayer { rotationZ = rotation },
+            )
+        }
+    }
+}
+
+/** One Twitch reward campaign: what it gives, what it asks for, when it ends. Tap for Twitch's page. */
+@Composable
+private fun RewardCard(r: RewardCampaign, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val url = r.url ?: "https://www.twitch.tv/drops/campaigns"
+    val game = remember(r.id) { WatchedGame("", r.game.ifEmpty { r.brand.ifEmpty { r.name } }, r.gameSlug ?: slugOf(r.game)) }
+    Surface(
+        onClick = { runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } },
+        shape = MaterialTheme.shapes.large,
+        color = scheme.surfaceContainer,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            GameArt(game, 48.dp, fallback = r.imageUrl)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(r.rewards.joinToString().ifEmpty { r.name }, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(
+                        r.minutesGoal.takeIf { it > 0 }?.let { m -> "Watch ${if (m >= 60 && m % 60 == 0) "${m / 60} h" else "$m min"}" + (if (r.game.isNotEmpty()) " of ${r.game}" else "") },
+                        r.subsGoal.takeIf { it > 0 }?.let { "Subscribe ($it sub${if (it == 1) "" else "s"})" },
+                    ).joinToString(" or ").ifEmpty { r.summary.ifEmpty { r.name } },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val days = ((r.endsAtMs - System.currentTimeMillis()) / 86_400_000L).toInt()
+                Text(
+                    if (days >= 1) "Ends in $days day${if (days == 1) "" else "s"} · progress shows on Twitch" else "Ends today · progress shows on Twitch",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.outline,
+                )
+            }
         }
     }
 }

@@ -34,8 +34,30 @@ data class Campaign(
     val linkUrl: String? = null,
 )
 
+/**
+ * A Twitch reward campaign (the dashboard's rewardCampaignsAvailableToUser): a Twitch-side reward such
+ * as a chat badge for watching a category or subscribing. Separate from drop campaigns, and Twitch
+ * doesn't report progress on them here.
+ */
+data class RewardCampaign(
+    val id: String,
+    val name: String,
+    val brand: String,
+    val game: String,
+    val gameSlug: String?,
+    val startsAtMs: Long,
+    val endsAtMs: Long,
+    /** Minutes of watching needed, 0 when the campaign isn't watch-time based. */
+    val minutesGoal: Int,
+    val subsGoal: Int,
+    val rewards: List<String>,
+    val imageUrl: String?,
+    val url: String?,
+    val summary: String,
+)
+
 /** `campaigns == null` means Twitch returned `dropCampaigns: null`, i.e. the integrity gate. */
-data class DashboardResult(val campaigns: List<Campaign>?, val errors: List<String>)
+data class DashboardResult(val campaigns: List<Campaign>?, val errors: List<String>, val rewards: List<RewardCampaign> = emptyList())
 
 /**
  * Clients whose device-code login Twitch still accepted on 2026-09-23 (rangermix/TwitchDropsMiner#118).
@@ -262,8 +284,12 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
     suspend fun dashboard(useIntegrity: Boolean, origin: ApiOrigin = defaultOrigin()): DashboardResult {
         val root = gql(Queries.dashboard(), useIntegrity, origin)
         val errors = root.errorMessages()
-        val arr = root.optJSONObject("data")?.optJSONObject("currentUser")?.optJSONArray("dropCampaigns")
-            ?: return DashboardResult(null, errors)
+        val data = root.optJSONObject("data")
+        val rewards = (data?.optJSONArray("rewardCampaignsAvailableToUser")
+            ?: data?.optJSONObject("currentUser")?.optJSONArray("rewardCampaignsAvailableToUser"))
+            ?.objects()?.map(::parseReward).orEmpty()
+        val arr = data?.optJSONObject("currentUser")?.optJSONArray("dropCampaigns")
+            ?: return DashboardResult(null, errors, rewards)
         val list = arr.objects().map { c ->
             Campaign(
                 id = c.optString("id"),
@@ -278,7 +304,29 @@ class TwitchApi(private val prefs: Prefs, private val userAgent: String) {
                 linked = c.optJSONObject("self")?.takeIf { it.has("isAccountConnected") }?.optBoolean("isAccountConnected"),
             )
         }
-        return DashboardResult(list, errors)
+        return DashboardResult(list, errors, rewards)
+    }
+
+    private fun parseReward(r: JSONObject): RewardCampaign {
+        val game = r.optJSONObject("game")
+        val req = r.optJSONObject("unlockRequirements")
+        fun str(o: JSONObject?, k: String) = o?.optString(k)?.takeIf { it.isNotBlank() && it != "null" }
+        return RewardCampaign(
+            id = r.optString("id"),
+            name = r.optString("name"),
+            brand = str(r, "brand").orEmpty(),
+            game = (str(game, "displayName") ?: str(game, "name")).orEmpty(),
+            gameSlug = str(game, "slug"),
+            startsAtMs = parseTime(r.optString("startsAt")).takeIf { it != Long.MAX_VALUE } ?: 0L,
+            endsAtMs = parseTime(r.optString("endsAt")),
+            minutesGoal = req?.optInt("minuteWatchedGoal") ?: 0,
+            subsGoal = req?.optInt("subsGoal") ?: 0,
+            rewards = (r.optJSONArray("rewards") ?: JSONArray()).objects().mapNotNull { str(it, "name") },
+            imageUrl = str(r.optJSONObject("image"), "image1xURL")
+                ?: (r.optJSONArray("rewards") ?: JSONArray()).objects().firstNotNullOfOrNull { str(it.optJSONObject("thumbnailImage"), "image1xURL") },
+            url = (str(r, "aboutURL") ?: str(r, "externalURL"))?.takeIf { it.startsWith("http") },
+            summary = str(r, "summary") ?: str(r, "instructions").orEmpty(),
+        )
     }
 
     /** Inventory is not integrity-gated today, so it works for background polling. */
@@ -676,7 +724,7 @@ internal object Queries {
     fun dashboard() = persisted(
         "ViewerDropsDashboard",
         "c16bb890cc8ce7647a96ee69cd313d423a378a3dedadf630a1017cde18975feb",
-        JSONObject().put("fetchRewardCampaigns", false),
+        JSONObject().put("fetchRewardCampaigns", true),
     )
 
     fun gameSlug(name: String) = persisted(

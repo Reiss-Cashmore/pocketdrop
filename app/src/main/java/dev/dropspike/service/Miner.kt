@@ -151,7 +151,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         this.campaigns = withDiscovered(campaigns)
         val openCount = campaigns.sumOf { openDrops(it).size }
         val doneUnclaimed = campaigns.sumOf { c -> c.drops.count { it.done && !it.claimed } }
-        DiagLog.i("miner: inventory ${campaigns.size} campaigns, $openCount open drops, $doneUnclaimed finished-unclaimed")
+        val channelCampaigns = campaigns.count { c -> c.drops.any { it.subOnly } }
+        DiagLog.i("miner: inventory ${campaigns.size} campaigns ($channelCampaigns with sub drops), $openCount open drops, $doneUnclaimed finished-unclaimed")
         claimFinished(campaigns)
         forgetNotCounting(campaigns)
 

@@ -2,6 +2,7 @@ package dev.dropspike.data
 
 import android.content.Context
 import androidx.core.content.edit
+import dev.dropspike.twitch.RewardCampaign
 import dev.dropspike.twitch.WatchedGame
 import org.json.JSONArray
 import org.json.JSONObject
@@ -74,6 +75,34 @@ class Prefs(context: Context) {
     var gameCatalog: List<WatchedGame>
         get() = decodeGames(sp.getString("game_catalog", null))
         set(v) = sp.edit { putString("game_catalog", encodeGames(v)) }
+
+    /** Twitch reward campaigns (badges etc.) from the last catalogue refresh. */
+    var rewardCampaigns: List<RewardCampaign>
+        get() = runCatching {
+            val a = JSONArray(sp.getString("reward_campaigns", null) ?: "[]")
+            (0 until a.length()).map { i ->
+                val j = a.getJSONObject(i)
+                val rs = j.optJSONArray("rewards") ?: JSONArray()
+                RewardCampaign(
+                    j.optString("id"), j.optString("name"), j.optString("brand"), j.optString("game"),
+                    j.optString("slug").ifEmpty { null }, j.optLong("startsAt"), j.optLong("endsAt"),
+                    j.optInt("minutes"), j.optInt("subs"), List(rs.length()) { rs.getString(it) },
+                    j.optString("image").ifEmpty { null }, j.optString("url").ifEmpty { null }, j.optString("summary"),
+                )
+            }
+        }.getOrDefault(emptyList())
+        set(v) = sp.edit {
+            putString("reward_campaigns", JSONArray().apply {
+                v.forEach { r ->
+                    put(
+                        JSONObject().put("id", r.id).put("name", r.name).put("brand", r.brand).put("game", r.game)
+                            .put("slug", r.gameSlug ?: "").put("startsAt", r.startsAtMs).put("endsAt", r.endsAtMs)
+                            .put("minutes", r.minutesGoal).put("subs", r.subsGoal).put("rewards", JSONArray(r.rewards))
+                            .put("image", r.imageUrl ?: "").put("url", r.url ?: "").put("summary", r.summary),
+                    )
+                }
+            }.toString())
+        }
 
     var gameCatalogAt: Long
         get() = sp.getLong("game_catalog_at", 0L)

@@ -12,8 +12,10 @@ object GameCatalog {
 
     suspend fun refresh(context: Context, prefs: Prefs, api: TwitchApi): Result<List<WatchedGame>> = runCatching {
         val now = System.currentTimeMillis()
+        var rewards = emptyList<RewardCampaign>()
         val fromDashboard = if (IntegrityRenewer.ensureFresh(context, prefs, api.defaultOrigin().url)) {
             val result = api.dashboard(useIntegrity = true)
+            rewards = result.rewards.filter { it.endsAtMs > now && it.startsAtMs <= now }
             result.campaigns
                 ?.filter { it.status == "ACTIVE" && it.endsAtMs > now && it.game.isNotEmpty() }
                 ?.groupBy { it.gameId.ifEmpty { it.game.lowercase() } }
@@ -38,12 +40,23 @@ object GameCatalog {
             .filter { it.endsAtMs > now }
             .map { WatchedGame(it.gameId, it.gameName, it.gameSlug ?: slugOf(it.gameName), endsAtMs = it.endsAtMs, startsAtMs = it.startsAtMs) }
 
-        val merged = (fromDashboard + fromInventory)
-            .groupBy { it.id.ifEmpty { it.name.lowercase() } }
+        // Watch-time reward campaigns (e.g. a Twitch badge for watching a game) make their game worth
+        // watching even when it has no drop campaign.
+        val fromRewards = rewards.filter { it.game.isNotEmpty() && it.minutesGoal > 0 }
+            .groupBy { it.game.lowercase() }
+            .map { (_, rs) ->
+                val r = rs.first()
+                val id = fromDashboard.firstOrNull { it.name.equals(r.game, ignoreCase = true) }?.id.orEmpty()
+                WatchedGame(id, r.game, r.gameSlug ?: slugOf(r.game), rs.size, endsAtMs = rs.minOf { it.endsAtMs }, startsAtMs = rs.maxOf { it.startsAtMs })
+            }
+
+        val merged = (fromDashboard + fromInventory + fromRewards)
+            .groupBy { it.name.lowercase() }
             // Inventory entries are in progress, so they are linked: they override "needs link".
             .map { (_, gs) ->
                 gs.maxBy { it.campaigns }
                     .let { best -> if (gs.any { it.campaigns == 0 }) best.copy(needsLink = false) else best }
+                    .let { best -> best.copy(id = best.id.ifEmpty { gs.firstNotNullOfOrNull { g -> g.id.ifEmpty { null } }.orEmpty() }) }
                     .copy(
                         endsAtMs = gs.filter { it.endsAtMs > 0 }.minOfOrNull { it.endsAtMs } ?: 0,
                         startsAtMs = gs.maxOf { it.startsAtMs },
@@ -51,8 +64,16 @@ object GameCatalog {
             }
             .sortedBy { it.name.lowercase() }
         prefs.gameCatalog = merged
+        prefs.rewardCampaigns = rewards
         prefs.gameCatalogAt = now
         DiagLog.i("games: ${merged.size} games with active campaigns, ${merged.count { it.needsLink }} need an account link: ${merged.filter { it.needsLink }.joinToString { "${it.name} (${it.linkUrl})" }}")
+        DiagLog.i(
+            "games: ${rewards.size} Twitch reward campaign(s)" + rewards.joinToString("") { r ->
+                "\n  ${r.name} · ${r.game.ifEmpty { r.brand.ifEmpty { "sitewide" } }} · " +
+                    listOfNotNull(r.minutesGoal.takeIf { it > 0 }?.let { "watch $it min" }, r.subsGoal.takeIf { it > 0 }?.let { "$it sub(s)" }).joinToString(" or ").ifEmpty { "no goal given" } +
+                    " · ${r.rewards.joinToString().ifEmpty { "reward not named" }} · ends ${java.util.Date(r.endsAtMs)}"
+            },
+        )
         // Keep the watch list's link status in step with the catalogue.
         prefs.watchedGames = prefs.watchedGames.map { w -> merged.firstOrNull { it.slug == w.slug } ?: w }
         merged
