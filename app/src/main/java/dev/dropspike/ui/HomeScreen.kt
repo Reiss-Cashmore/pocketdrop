@@ -554,7 +554,7 @@ private fun RewardsHeader(rewards: List<RewardCampaign>, expanded: Boolean, onTo
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text("Badges and other rewards Twitch gives itself; add the game to your watch list to earn them", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+                Text("Rewards Twitch gives for watch time; progress shows on Twitch, not here", style = MaterialTheme.typography.labelSmall, color = scheme.outline)
             }
             Icon(
                 Icons.Default.KeyboardArrowDown,
