@@ -80,6 +80,17 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     private val cooldown = mutableMapOf<String, Long>()
 
     /**
+     * Channel login → until when it is skipped because Twitch stopped crediting on it (Overwatch, Nov 2026:
+     * ta1yo_tv stuck at 543/600 for an hour while the miner kept going back to it every 30 minutes).
+     */
+    private val badChannels = mutableMapOf<String, Long>()
+
+    private fun usable(login: String) = (badChannels[login] ?: 0L) < System.currentTimeMillis()
+
+    /** When the reward campaign list was last refreshed from here (see [refreshRewardsIfStale]). */
+    private var rewardsRefreshedAt = 0L
+
+    /**
      * Game key → minutes watched without credit while its campaign hasn't started on the account.
      * Per game rather than per channel, so switching channels doesn't reset it.
      */
@@ -135,6 +146,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             (perSlot.ifEmpty { listOf("Target game" to "none") }) +
             listOf(
                 "Idle ticks in a row" to idleTicks.toString(),
+                "Channels skipped (stopped crediting)" to badChannels.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
                 "Games cooling down" to cooldown.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
                 "Minutes not counted (campaign not started)" to uncounted.entries.joinToString { "${it.key} ${it.value}" }.ifEmpty { "none" },
                 "All drops earned (skipped)" to prefs.allEarned.filterValues { it > now }.entries.joinToString { "${it.key} until ${SystemInfo.time(it.value)}" }.ifEmpty { "none" },
@@ -150,7 +162,23 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             )
     }
 
+    /**
+     * Reward campaigns come with the game list, which may be hours old or saved by a version that didn't
+     * keep their groups (then no reward can be matched to Twitch's session). Refresh it from here then.
+     */
+    private suspend fun refreshRewardsIfStale() {
+        val now = System.currentTimeMillis()
+        if (now - rewardsRefreshedAt < REWARDS_REFRESH_MS) return
+        val stale = prefs.rewardCampaigns.any { it.groups.isEmpty() } || now - prefs.gameCatalogAt > REWARDS_REFRESH_MS
+        if (!stale) return
+        rewardsRefreshedAt = now
+        dev.dropspike.twitch.GameCatalog.refresh(context, prefs, api)
+            .onSuccess { DiagLog.i("miner: refreshed the game list for Twitch reward campaigns (${prefs.rewardCampaigns.size})") }
+            .onFailure { DiagLog.i("miner: couldn't refresh Twitch reward campaigns: ${it.message}") }
+    }
+
     suspend fun tick(): Pair<MinuteStatus, String> {
+        refreshRewardsIfStale()
         val campaigns = try {
             api.inventoryCampaigns()
         } catch (e: Exception) {
@@ -367,7 +395,11 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         }
         return when {
             // Twitch credits in bursts (sometimes 6+ minutes apart), so give it a while before giving up.
-            (started || live != null) && slot.withoutCredit >= NO_CREDIT_LIMIT -> "no progress in $NO_CREDIT_LIMIT min".also { cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS }
+            (started || live != null) && slot.withoutCredit >= NO_CREDIT_LIMIT -> "no progress in $NO_CREDIT_LIMIT min".also {
+                cooldown[key(t.game)] = System.currentTimeMillis() + COOLDOWN_MS
+                badChannels[t.stream.login] = System.currentTimeMillis() + BAD_CHANNEL_MS
+                DiagLog.i("miner: skipping ${t.stream.login} for ${t.game.name} until ${SystemInfo.time(badChannels.getValue(t.stream.login))}; other channels are still tried")
+            }
             // Everything for this game is earned (and it isn't just not started yet).
             hasCampaign(campaigns, t.game) && !hasOpenDrops(campaigns, t.game) && live == null -> "all drops earned"
             // Re-check the pick periodically: the channel may have gone offline or changed game.
@@ -614,7 +646,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
     private suspend fun streamFor(game: WatchedGame, campaigns: List<InvCampaign>, forReward: Boolean, probe: Boolean = true): LiveStream? {
         findStream(game, campaigns, probe)?.let { return it }
         if (!forReward) return null
-        return api.liveStreams(game).firstOrNull()
+        return api.liveStreams(game).firstOrNull { usable(it.login) }
             ?.also { DiagLog.i("miner: ${game.name}: no channel for its drops, watching ${it.login} for its Twitch reward") }
     }
 
@@ -641,7 +673,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         }
         if (acl.isNotEmpty()) {
             DiagLog.i("miner: ${game.name}: campaign restricted to ${acl.size} channel(s), checking ${acl.take(15).joinToString()}")
-            for (login in acl.take(15)) {
+            for (login in acl.filter(::usable).take(15)) {
                 val s = runCatching { api.streamInfo(login) }.getOrNull()
                 if (s == null) continue
                 if (game.matches(s.gameId, s.gameName)) return s
@@ -651,11 +683,11 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         }
         // Escape from Tarkov (Oct 2026) counted on mrs_boocifer but stayed 0/0 on realkraftyy, and its
         // campaign wasn't in the dashboard to say why: go back to the channel that last counted.
-        creditedOn[key(game)]?.let { login ->
+        creditedOn[key(game)]?.takeIf(::usable)?.let { login ->
             val s = runCatching { api.streamInfo(login) }.getOrNull()
             if (s != null && game.matches(s.gameId, s.gameName)) return s
         }
-        val streams = api.liveStreams(game)
+        val streams = api.liveStreams(game).filter { usable(it.login) }
         DiagLog.i("miner: ${game.name} (slug ${game.slug}): ${streams.size} live drops-enabled channel(s)${streams.take(3).joinToString(prefix = if (streams.isEmpty()) "" else ": ") { "${it.login}/${it.viewers}" }}")
         // Nothing about this game's campaigns is known (not in the inventory, not on the dashboard): ask a
         // few channels what they count towards and take one with an open watch campaign for the game.
@@ -772,6 +804,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
 
     companion object {
         private const val COOLDOWN_MS = 30 * 60 * 1000L
+        private const val BAD_CHANNEL_MS = 2 * 60 * 60 * 1000L
+        private const val REWARDS_REFRESH_MS = 60 * 60 * 1000L
         private const val STUCK_AFTER = 3
         private const val STUCK_RETRY_MS = 6 * 60 * 60 * 1000L
 
