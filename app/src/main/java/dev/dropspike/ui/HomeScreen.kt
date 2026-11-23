@@ -630,17 +630,19 @@ private fun RewardCard(
                     val now = System.currentTimeMillis()
                     val days = progress?.doneDays?.size ?: 0
                     val seen = progress?.takeIf { it.required > 0 }
+                    val unopened = (progress?.pausedUntil ?: 0) > now && progress?.pauseReason == dev.dropspike.service.RewardWatch.NEEDS_OPENING
                     Text(
                         when {
                             target == null -> "Not mined: pick the game it counts for"
+                            unopened -> "Watched ${progress!!.minutes}/${progress.required} min, but Twitch hasn't unlocked it: tap to open it on Twitch"
                             (progress?.pausedUntil ?: 0) > now ->
                                 "${progress!!.pauseReason.replaceFirstChar { it.uppercase() }} · checks again at ${dev.dropspike.data.SystemInfo.time(progress.pausedUntil)}"
                             seen != null -> "Twitch: ${seen.minutes}/${seen.required} min on ${target.name}"
                             guess -> "Trying ${target.name}; waiting for Twitch to confirm it counts"
                             else -> "Mining ${target.name} for it; waiting for Twitch's count"
-                        } + (if (days > 0) " · goal reached on $days day${if (days == 1) "" else "s"}" else ""),
+                        } + (if (days > 0) " · claimed on $days day${if (days == 1) "" else "s"}" else ""),
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (target == null) scheme.error else scheme.primary,
+                        color = if (target == null || unopened) scheme.error else scheme.primary,
                     )
                     Box {
                         androidx.compose.material3.TextButton(onClick = { menu = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp)) {

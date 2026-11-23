@@ -12,6 +12,7 @@ import dev.dropspike.twitch.IntegrityRenewer
 import dev.dropspike.twitch.InvCampaign
 import dev.dropspike.twitch.InvDrop
 import dev.dropspike.twitch.LiveStream
+import dev.dropspike.twitch.RewardCampaign
 import dev.dropspike.twitch.TwitchApi
 import dev.dropspike.twitch.WatchedGame
 import dev.dropspike.twitch.slugOf
@@ -156,7 +157,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                     val st = prefs.rewardProgress[r.id]
                     "${r.name} (groups ${r.watchGroups.joinToString { "${it.id.take(8)}… ${it.minutes} min" }}) → " +
                         (RewardWatch.gameFor(r, prefs.watchedGames, prefs.rewardGames, st)?.name ?: "no game") +
-                        (st?.let { " · seen ${it.minutes}/${it.required} at ${SystemInfo.time(it.seenAt)}" + (if (it.pausedUntil > now) " · paused until ${SystemInfo.time(it.pausedUntil)} (${it.pauseReason})" else "") + " · done days ${it.doneDays.size}" } ?: "")
+                        (st?.let { " · seen ${it.minutes}/${it.required} at ${SystemInfo.time(it.seenAt)}" + (if (it.pausedUntil > now) " · paused until ${SystemInfo.time(it.pausedUntil)} (${it.pauseReason})" else "") + " · claimed days ${it.doneDays.size}" } ?: "")
                 }.ifEmpty { "none" },
                 "Claims Twitch accepts but hasn't delivered" to prefs.stuckClaims.entries.joinToString { "${it.key.take(8)}… ×${it.value.first}" }.ifEmpty { "none" },
             )
@@ -298,7 +299,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             val session = runCatching { api.currentDrop(t.stream.channelId) }
                 .onFailure { DiagLog.i("miner: session check on ${t.stream.login} failed: ${it.message}") }.getOrNull()
             val before = prefs.rewardProgress
-            val stillDue = RewardWatch.observe(prefs, t.game, session)
+            val stillDue = RewardWatch.observe(prefs, t.game, session) { r, groupId -> claimReward(r, groupId) }
             val after = prefs.rewardProgress
             slot.credited = due.any { d -> (after[d.reward.id]?.minutes ?: 0) > (before[d.reward.id]?.minutes ?: 0) && after[d.reward.id]?.seenAt != before[d.reward.id]?.seenAt }
             DiagLog.i("miner: ${t.game.name} on ${t.stream.login} for ${due.joinToString { it.reward.name }}; Twitch session ${session ?: "0/0"}")
@@ -481,7 +482,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
      */
     private suspend fun channelCampaigns(stream: LiveStream, maxAgeMs: Long = DETAILS_MAX_AGE_MS): List<InvCampaign>? {
         val now = System.currentTimeMillis()
-        channelDetails[stream.channelId]?.let { (at, list) -> if (now - at <= maxAgeMs) return list }
+        channelDetails[stream.channelId]?.let { (at, list) -> if (now - at <= maxAgeMs) return list.filter { rewardFor(it) == null } }
         if (!IntegrityRenewer.ensureFresh(context, prefs, api.defaultOrigin().url)) return null
         val list = runCatching { api.channelCampaigns(stream.channelId) }
             .onFailure { DiagLog.i("miner: reading ${stream.login}'s campaigns failed: ${it.message}") }
@@ -489,11 +490,51 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         channelDetails[stream.channelId] = now to list
         remember(list)
         DiagLog.i("miner: ${stream.login} counts towards: ${describeCampaigns(list, withGame = true)}")
-        return list
+        return list.filter { rewardFor(it) == null }
     }
 
     private fun remember(list: List<InvCampaign>) {
-        for (c in list) if (c.drops.any { it.required > 0 }) discovered[c.id] = c
+        for (c in list) if (c.drops.any { it.required > 0 } && rewardFor(c) == null) discovered[c.id] = c
+    }
+
+    /**
+     * The Twitch reward campaign [c] is the drop-campaign side of, if any. Twitch lists reward campaigns
+     * (GTAVI Launch Celebration, Nov 2026) as drop campaigns too, under the game "Special Events", with an
+     * account link and no progress. They're shown and mined as rewards, not as drop campaigns.
+     */
+    private fun rewardFor(c: InvCampaign): RewardCampaign? {
+        val ids = c.drops.map { it.id }.toSet()
+        return prefs.rewardCampaigns.firstOrNull { r ->
+            r.id == c.id || r.name.equals(c.name, ignoreCase = true) || r.groups.any { it.id in ids }
+        }
+    }
+
+    /**
+     * Claims a finished reward group (on Twitch: opening its chest). Tries the id built as for drops,
+     * "userId#campaignId#groupId", with the reward campaign's id and then its drop-campaign twin's.
+     */
+    private suspend fun claimReward(r: RewardCampaign, groupId: String): Boolean {
+        val now = System.currentTimeMillis()
+        val key = "reward:$groupId"
+        if (now - (claimAttempts[key] ?: 0L) < COOLDOWN_MS) return false
+        claimAttempts[key] = now
+        val userId = prefs.userId ?: return false
+        if (!IntegrityRenewer.ensureFresh(context, prefs, api.defaultOrigin().url)) {
+            DiagLog.i("rewards: ${r.name}: finished, but no integrity token to claim it")
+            return false
+        }
+        val twins = (channelDetails.values.flatMap { it.second } + discovered.values)
+            .filter { rewardFor(it)?.id == r.id && it.id != r.id }.map { it.id }.distinct()
+        for (campaignId in listOf(r.id) + twins) {
+            val result = runCatching { api.claimDrop("$userId#$campaignId#$groupId") }
+            DiagLog.i("rewards: claim ${r.name} group ${groupId.take(8)}… via campaign ${campaignId.take(8)}… → ${result.getOrElse { it.message }}")
+            val status = result.getOrNull() ?: continue
+            if (status == "ELIGIBLE_FOR_ALL" || status == "DROP_INSTANCE_ALREADY_CLAIMED") {
+                ClaimLog.record(ClaimEntry(now, r.game.ifEmpty { r.brand }, "", r.name, r.rewards.joinToString().ifEmpty { "Twitch reward" }, r.imageUrl, "CLAIMED"))
+                return true
+            }
+        }
+        return false
     }
 
     private fun describeCampaigns(list: List<InvCampaign>, withGame: Boolean = false) = list.joinToString { c ->
@@ -513,7 +554,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val have = inventory.map { it.id }.toSet()
         val lives = slots.mapNotNull { it.live }.associateBy { it.dropId }
         val extra = discovered.values.filter { c ->
-            c.id !in have && c.endsAtMs > now && c.drops.any { d -> d.required > 0 && !d.claimed && d.endsAtMs > now }
+            c.id !in have && rewardFor(c) == null && c.endsAtMs > now && c.drops.any { d -> d.required > 0 && !d.claimed && d.endsAtMs > now }
         }.map { c ->
             c.copy(drops = c.drops.map { d -> lives[d.id]?.let { d.copy(minutes = maxOf(d.minutes, it.minutes)) } ?: d })
         }

@@ -20,8 +20,13 @@ import java.time.ZoneOffset
  *
  * - The miner watches a reward's game while the reward isn't paused, reading the session every minute.
  * - The session counting one of the reward's groups confirms the game and gives real progress.
- * - Reaching the goal, or the session not counting the reward for [UNRELATED_LIMIT] minutes, pauses it
- *   for a while; afterwards the miner looks again, which is how a daily reset is noticed.
+ * - Reaching the goal does NOT unlock the reward: like a drop, the group then has to be claimed (on
+ *   Twitch it's "open the chest"). Until it is, the session keeps counting past the goal (Nov 2026:
+ *   208/60 on GTA VI with day 2's badge still locked) and the next day never starts. So at the goal the
+ *   miner claims it; only an accepted claim counts as a day done. If the claim fails, the user is asked
+ *   to open it on Twitch.
+ * - The session not counting the reward for [UNRELATED_LIMIT] minutes pauses it for a while; afterwards
+ *   the miner looks again, which is how a daily reset is noticed.
  *
  * The game comes from the campaign when Twitch names it (sitewide ones don't), else the user's choice,
  * else a game the session has confirmed, else a watched game the campaign text mentions (only a guess
@@ -33,6 +38,10 @@ object RewardWatch {
     const val UNRELATED_LIMIT = 5
     private const val DONE_PAUSE_MS = 3 * 60 * 60 * 1000L
     private const val UNRELATED_PAUSE_MS = 2 * 60 * 60 * 1000L
+    private const val UNCLAIMED_PAUSE_MS = 60 * 60 * 1000L
+
+    /** Pause reason while a finished group waits to be opened on Twitch. */
+    const val NEEDS_OPENING = "finished, open it on Twitch"
 
     data class State(
         val minutes: Int = 0,
@@ -48,17 +57,19 @@ object RewardWatch {
         val unrelated: Int = 0,
         /** Guessed games the session didn't confirm. */
         val rejected: List<String> = emptyList(),
-        /** UTC days Twitch reported the goal reached. */
+        /** UTC days a finished group was claimed (Twitch accepted it). */
         val doneDays: List<String> = emptyList(),
     ) {
         fun toJson(): JSONObject = JSONObject().put("min", minutes).put("req", required).put("seen", seenAt).put("game", game)
             .put("paused", pausedUntil).put("why", pauseReason).put("unrelated", unrelated)
-            .put("rejected", JSONArray(rejected)).put("days", JSONArray(doneDays))
+            .put("rejected", JSONArray(rejected)).put("claimedDays", JSONArray(doneDays))
 
         companion object {
             fun fromJson(j: JSONObject) = State(
                 j.optInt("min"), j.optInt("req"), j.optLong("seen"), j.optString("game"), j.optLong("paused"),
-                j.optString("why"), j.optInt("unrelated"), j.optJSONArray("rejected").strings(), j.optJSONArray("days").strings(),
+                j.optString("why"), j.optInt("unrelated"), j.optJSONArray("rejected").strings(),
+                // "days" (before 0.1.71) counted the goal being reached, not the reward unlocking: dropped.
+                j.optJSONArray("claimedDays").strings(),
             )
 
             private fun JSONArray?.strings() = if (this == null) emptyList() else List(length()) { getString(it) }
@@ -102,25 +113,35 @@ object RewardWatch {
 
     /**
      * Records one minute of watching [game] with Twitch's [session] on that channel (null: nothing counting,
-     * or it couldn't be read). Returns whether any reward still wants this game.
+     * or it couldn't be read). At a group's goal, [claim] is asked to claim it and returns whether Twitch
+     * accepted. Returns whether any reward still wants this game.
      */
-    fun observe(prefs: Prefs, game: WatchedGame, session: DropSession?, now: Long = System.currentTimeMillis()): Boolean {
+    suspend fun observe(
+        prefs: Prefs,
+        game: WatchedGame,
+        session: DropSession?,
+        now: Long = System.currentTimeMillis(),
+        claim: suspend (RewardCampaign, String) -> Boolean,
+    ): Boolean {
         val dueHere = due(prefs, now).filter { it.game.name == game.name }
         if (dueHere.isEmpty()) return false
-        val all = prefs.rewardProgress.toMutableMap()
         val overrides = prefs.rewardGames
         var stillDue = false
         for (d in dueHere) {
             val r = d.reward
-            val st = all[r.id] ?: State()
+            val st = prefs.rewardProgress[r.id] ?: State()
             val counting = session?.takeIf { s -> r.watchGroups.any { it.id == s.dropId } }
             val next = when {
-                counting != null && counting.minutes >= counting.required -> {
-                    DiagLog.i("rewards: ${r.name}: Twitch reports ${counting.minutes}/${counting.required} min on ${game.name}, goal reached; checking again at ${SystemInfo.time(now + DONE_PAUSE_MS)}")
-                    st.copy(
-                        minutes = counting.minutes, required = counting.required, seenAt = now, game = game.name, unrelated = 0,
-                        pausedUntil = now + DONE_PAUSE_MS, pauseReason = "goal reached", doneDays = (st.doneDays + today(now)).distinct(),
-                    )
+                counting != null && counting.required > 0 && counting.minutes >= counting.required -> {
+                    val ok = claim(r, counting.dropId)
+                    val seen = st.copy(minutes = counting.minutes, required = counting.required, seenAt = now, game = game.name, unrelated = 0)
+                    if (ok) {
+                        DiagLog.i("rewards: ${r.name}: ${counting.minutes}/${counting.required} min on ${game.name}, claimed; checking again at ${SystemInfo.time(now + DONE_PAUSE_MS)}")
+                        seen.copy(pausedUntil = now + DONE_PAUSE_MS, pauseReason = "claimed today", doneDays = (st.doneDays + today(now)).distinct())
+                    } else {
+                        DiagLog.w("rewards: ${r.name}: ${counting.minutes}/${counting.required} min on ${game.name}, finished but not unlocked; couldn't claim it from here, it needs opening on Twitch")
+                        seen.copy(pausedUntil = now + UNCLAIMED_PAUSE_MS, pauseReason = NEEDS_OPENING)
+                    }
                 }
                 counting != null -> {
                     if (st.game != game.name) DiagLog.i("rewards: ${r.name}: Twitch counts it on ${game.name} (${counting.minutes}/${counting.required} min)")
@@ -143,9 +164,8 @@ object RewardWatch {
                     st.copy(unrelated = st.unrelated + 1)
                 }
             }
-            all[r.id] = next
+            prefs.rewardProgress = prefs.rewardProgress + (r.id to next)
         }
-        prefs.rewardProgress = all
         return stillDue
     }
 
