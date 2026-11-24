@@ -157,7 +157,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
                     val st = prefs.rewardProgress[r.id]
                     "${r.name} (groups ${r.watchGroups.joinToString { "${it.id.take(8)}… ${it.minutes} min" }}) → " +
                         (RewardWatch.gameFor(r, prefs.watchedGames, prefs.rewardGames, st)?.name ?: "no game") +
-                        (st?.let { " · seen ${it.minutes}/${it.required} at ${SystemInfo.time(it.seenAt)}" + (if (it.pausedUntil > now) " · paused until ${SystemInfo.time(it.pausedUntil)} (${it.pauseReason})" else "") + " · claimed days ${it.doneDays.size}" } ?: "")
+                        (st?.let { " · session ${it.minutes}/${it.required}, today ${it.todayMinutes(now)} min, at ${SystemInfo.time(it.seenAt)}" + (if (it.pausedUntil > now) " · paused until ${SystemInfo.time(it.pausedUntil)} (${it.pauseReason})" else "") + " · days done ${it.doneDays.size}" } ?: "")
                 }.ifEmpty { "none" },
                 "Claims Twitch accepts but hasn't delivered" to prefs.stuckClaims.entries.joinToString { "${it.key.take(8)}… ×${it.value.first}" }.ifEmpty { "none" },
             )
@@ -529,7 +529,8 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
             val result = runCatching { api.claimDrop("$userId#$campaignId#$groupId") }
             DiagLog.i("rewards: claim ${r.name} group ${groupId.take(8)}… via campaign ${campaignId.take(8)}… → ${result.getOrElse { it.message }}")
             val status = result.getOrNull() ?: continue
-            if (status == "ELIGIBLE_FOR_ALL" || status == "DROP_INSTANCE_ALREADY_CLAIMED") {
+            // "Already claimed" can mean an earlier day's chest, so only a fresh claim counts.
+            if (status == "ELIGIBLE_FOR_ALL") {
                 ClaimLog.record(ClaimEntry(now, r.game.ifEmpty { r.brand }, "", r.name, r.rewards.joinToString().ifEmpty { "Twitch reward" }, r.imageUrl, "CLAIMED"))
                 return true
             }
@@ -768,7 +769,7 @@ class Miner(private val context: Context, private val prefs: Prefs, private val 
         val states = prefs.rewardProgress
         return RewardWatch.due(prefs).filter { key(it.game) == key(game) }.joinToString { d ->
             val st = states[d.reward.id]
-            d.reward.name + (st?.takeIf { it.required > 0 && System.currentTimeMillis() - it.seenAt < 10 * 60_000L }?.let { " ${it.minutes}/${it.required} min" } ?: " (waiting for Twitch to count it)")
+            d.reward.name + (st?.takeIf { it.required > 0 && System.currentTimeMillis() - it.seenAt < 10 * 60_000L }?.let { " ${it.todayMinutes()}/${it.required} min today" } ?: " (waiting for Twitch to count it)")
         }.ifEmpty { "Twitch reward" }
     }
 

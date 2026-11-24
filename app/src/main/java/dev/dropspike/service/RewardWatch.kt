@@ -57,19 +57,24 @@ object RewardWatch {
         val unrelated: Int = 0,
         /** Guessed games the session didn't confirm. */
         val rejected: List<String> = emptyList(),
-        /** UTC days a finished group was claimed (Twitch accepted it). */
+        /** UTC days the day's watch time was reached. */
         val doneDays: List<String> = emptyList(),
+        /** Session minutes when today's counting started; today's progress is the increase since. */
+        val baseline: Int = 0,
+        val baselineDay: String = "",
     ) {
+        /** Minutes watched today as Twitch counts them (see [baseline]). */
+        fun todayMinutes(now: Long = System.currentTimeMillis()) = if (baselineDay == today(now)) (minutes - baseline).coerceAtLeast(0) else 0
         fun toJson(): JSONObject = JSONObject().put("min", minutes).put("req", required).put("seen", seenAt).put("game", game)
             .put("paused", pausedUntil).put("why", pauseReason).put("unrelated", unrelated)
-            .put("rejected", JSONArray(rejected)).put("claimedDays", JSONArray(doneDays))
+            .put("rejected", JSONArray(rejected)).put("days3", JSONArray(doneDays)).put("base", baseline).put("baseDay", baselineDay)
 
         companion object {
             fun fromJson(j: JSONObject) = State(
                 j.optInt("min"), j.optInt("req"), j.optLong("seen"), j.optString("game"), j.optLong("paused"),
                 j.optString("why"), j.optInt("unrelated"), j.optJSONArray("rejected").strings(),
-                // "days" (before 0.1.71) counted the goal being reached, not the reward unlocking: dropped.
-                j.optJSONArray("claimedDays").strings(),
+                // Earlier versions' day lists ("days", "claimedDays") were wrong: dropped.
+                j.optJSONArray("days3").strings(), j.optInt("base"), j.optString("baseDay"),
             )
 
             private fun JSONArray?.strings() = if (this == null) emptyList() else List(length()) { getString(it) }
@@ -80,6 +85,10 @@ object RewardWatch {
     data class Due(val reward: RewardCampaign, val game: WatchedGame, val state: State?)
 
     fun today(now: Long = System.currentTimeMillis()): String = Instant.ofEpochMilli(now).atZone(ZoneOffset.UTC).toLocalDate().toString()
+
+    /** Start of the next UTC day: when a daily group counts again. */
+    fun nextUtcDay(now: Long = System.currentTimeMillis()): Long =
+        Instant.ofEpochMilli(now).atZone(ZoneOffset.UTC).toLocalDate().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
 
     fun active(r: RewardCampaign, now: Long = System.currentTimeMillis()) =
         r.watchGroups.isNotEmpty() && r.startsAtMs <= now && r.endsAtMs > now
@@ -131,22 +140,27 @@ object RewardWatch {
             val r = d.reward
             val st = prefs.rewardProgress[r.id] ?: State()
             val counting = session?.takeIf { s -> r.watchGroups.any { it.id == s.dropId } }
+            // Twitch's session minutes for a repeating group never reset (GTA VI, Nov 2026: 445/60 the morning
+            // after day 2 was opened, while Twitch showed day 3 at 0), so today's progress is how far the
+            // count has moved since the first reading today. A counter still under the goal is taken as is.
+            val base = counting?.let { c ->
+                if (st.baselineDay == today(now)) st else st.copy(baseline = if (c.minutes < c.required) 0 else c.minutes, baselineDay = today(now))
+            }
+            val todayMin = base?.let { counting.minutes - it.baseline } ?: 0
             val next = when {
-                counting != null && counting.required > 0 && counting.minutes >= counting.required -> {
+                counting != null && counting.required > 0 && todayMin >= counting.required -> {
                     val ok = claim(r, counting.dropId)
-                    val seen = st.copy(minutes = counting.minutes, required = counting.required, seenAt = now, game = game.name, unrelated = 0)
-                    if (ok) {
-                        DiagLog.i("rewards: ${r.name}: ${counting.minutes}/${counting.required} min on ${game.name}, claimed; checking again at ${SystemInfo.time(now + DONE_PAUSE_MS)}")
-                        seen.copy(pausedUntil = now + DONE_PAUSE_MS, pauseReason = "claimed today", doneDays = (st.doneDays + today(now)).distinct())
-                    } else {
-                        DiagLog.w("rewards: ${r.name}: ${counting.minutes}/${counting.required} min on ${game.name}, finished but not unlocked; couldn't claim it from here, it needs opening on Twitch")
-                        seen.copy(pausedUntil = now + UNCLAIMED_PAUSE_MS, pauseReason = NEEDS_OPENING)
-                    }
+                    val seen = base!!.copy(minutes = counting.minutes, required = counting.required, seenAt = now, game = game.name, unrelated = 0,
+                        doneDays = (st.doneDays + today(now)).distinct())
+                    val until = nextUtcDay(now)
+                    DiagLog.i("rewards: ${r.name}: $todayMin/${counting.required} min today on ${game.name}, done for today" +
+                        (if (ok) " and claimed" else "; open it on Twitch if it isn't unlocked") + "; next try ${SystemInfo.time(until)}")
+                    seen.copy(pausedUntil = until, pauseReason = if (ok) "done today" else NEEDS_OPENING)
                 }
                 counting != null -> {
-                    if (st.game != game.name) DiagLog.i("rewards: ${r.name}: Twitch counts it on ${game.name} (${counting.minutes}/${counting.required} min)")
+                    if (st.game != game.name) DiagLog.i("rewards: ${r.name}: Twitch counts it on ${game.name} ($todayMin/${counting.required} min today)")
                     stillDue = true
-                    st.copy(minutes = counting.minutes, required = counting.required, seenAt = now, game = game.name, unrelated = 0, pauseReason = "")
+                    base!!.copy(minutes = counting.minutes, required = counting.required, seenAt = now, game = game.name, unrelated = 0, pauseReason = "")
                 }
                 st.unrelated + 1 >= UNRELATED_LIMIT -> {
                     // Only reject a guessed game when nothing at all counted there; another drop counting
@@ -175,7 +189,8 @@ object RewardWatch {
         val r = prefs.rewardCampaigns.firstOrNull { c -> active(c, now) && c.watchGroups.any { it.id == session.dropId } } ?: return
         val all = prefs.rewardProgress.toMutableMap()
         val st = all[r.id] ?: State()
-        all[r.id] = st.copy(minutes = session.minutes, required = session.required, seenAt = now, game = game.name, unrelated = 0)
+        val base = if (st.baselineDay == today(now)) st else st.copy(baseline = if (session.minutes < session.required) 0 else session.minutes, baselineDay = today(now))
+        all[r.id] = base.copy(minutes = session.minutes, required = session.required, seenAt = now, game = game.name, unrelated = 0)
         prefs.rewardProgress = all
     }
 

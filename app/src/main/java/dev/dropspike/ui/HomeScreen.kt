@@ -637,10 +637,10 @@ private fun RewardCard(
                             unopened -> "Watched ${progress!!.minutes}/${progress.required} min, but Twitch hasn't unlocked it: tap to open it on Twitch"
                             (progress?.pausedUntil ?: 0) > now ->
                                 "${progress!!.pauseReason.replaceFirstChar { it.uppercase() }} · checks again at ${dev.dropspike.data.SystemInfo.time(progress.pausedUntil)}"
-                            seen != null -> "Twitch: ${seen.minutes}/${seen.required} min on ${target.name}"
+                            seen != null -> "Twitch: ${seen.todayMinutes()}/${seen.required} min today on ${target.name}"
                             guess -> "Trying ${target.name}; waiting for Twitch to confirm it counts"
                             else -> "Mining ${target.name} for it; waiting for Twitch's count"
-                        } + (if (days > 0) " · claimed on $days day${if (days == 1) "" else "s"}" else ""),
+                        } + (if (days > 0) " · done on $days day${if (days == 1) "" else "s"}" else ""),
                         style = MaterialTheme.typography.labelMedium,
                         color = if (target == null || unopened) scheme.error else scheme.primary,
                     )
